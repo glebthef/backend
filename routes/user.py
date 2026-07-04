@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies import get_session
 from models import User
-
+from argon2 import PasswordHasher
 from schemas.user import UserCreate, UserResponse
 
 router = APIRouter()
@@ -13,9 +13,10 @@ async def create_user(
         user_data:Annotated[UserCreate, Body()],
         session:  Annotated[AsyncSession, Depends(get_session)]
 ):
+    ph = PasswordHasher()
     new_user = User(
         login=user_data.login,
-        password=user_data.password,
+        password_hash=ph.hash(user_data.password),
         balance=0.0
     )
     session.add(new_user)
@@ -46,11 +47,7 @@ async def get_all_users(session: Annotated[AsyncSession, Depends(get_session)]):
     user = await session.scalars(stmt)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    return UserResponse(
-        id=user.id,
-        login=user.login,
-        balance=user.balance,
-    )
+    return list(user)
 
 @router.patch("/users/{user_id}/balance", response_model=UserResponse)
 async def update_balance(

@@ -26,18 +26,9 @@ async def create_event(
         odd_p2=event_data.odd_p2,
     )
     session.add(new_event)
-    session.commit()
-    return EventResponse(
-        sport_id=new_event.sport_id,
-        league=new_event.league,
-        home=new_event.home,
-        away=new_event.away,
-        starts_at=new_event.starts_at,
-        odd_p1=new_event.odd_p1,
-        odd_x=new_event.odd_x,
-        odd_p2=new_event.odd_p2,
-        is_active=new_event.is_active,
-    )
+    await session.commit()
+    await session.refresh(new_event)
+    return new_event
 @router.get("/events/{event_id}", response_model=EventResponse)
 async def get_event(
         event_id: int,
@@ -45,8 +36,8 @@ async def get_event(
 ):
     stmt = select(Event).where(Event.id == event_id)
     event = await session.scalar(stmt)
-    await session.commit()
-    if event in None:
+
+    if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
     return EventResponse(
         id = event.id,

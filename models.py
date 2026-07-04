@@ -16,7 +16,7 @@ class User(Base):
     __tablename__ = "user"
     id: Mapped[int] = mapped_column(primary_key=True)
     login: Mapped[str] = mapped_column(unique=True)
-    password: Mapped[str]
+    password_hash: Mapped[str]
     balance: Mapped[float] = mapped_column(default=0)
 
 class Sport(Base):

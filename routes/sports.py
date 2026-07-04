@@ -40,14 +40,14 @@ async def get_sport(
         icon=sport.icon,
         slug=sport.slug,
     )
-@router.get("/sports", response_model=SportResponse)
+@router.get("/sports", response_model=list[SportResponse])
 async def get_sports(
         session: Annotated[AsyncSession, Depends(get_session)]
 ):
     stmt = select(Sport)
     sports = await session.scalars(stmt)
     await session.commit()
-    return sports
+    return list(sports)
 
 @router.put("/sports/{sport_id}", response_model=SportResponse)
 async def update_sport(
