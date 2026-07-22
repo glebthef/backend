@@ -5,19 +5,22 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 engine = create_async_engine(
-    "postgresql+asyncpg://postgres:@127.0.0.1:5432/primebet",
+    "postgresql+asyncpg://postgres:6996@127.0.0.1:5432/primebet",
     echo=True,
 )
 
+
 class Base(DeclarativeBase):
     pass
+
 
 class User(Base):
     __tablename__ = "user"
     id: Mapped[int] = mapped_column(primary_key=True)
     login: Mapped[str] = mapped_column(unique=True)
     password_hash: Mapped[str]
-    balance: Mapped[float] = mapped_column(default=0)
+    balance: Mapped[float] = mapped_column(default=0.0)
+
 
 class Sport(Base):
     __tablename__ = "sport"
@@ -26,28 +29,36 @@ class Sport(Base):
     icon: Mapped[str]
     slug: Mapped[str] = mapped_column(unique=True)
 
-class  Event(Base):
+
+class Event(Base):
     __tablename__ = "event"
     id: Mapped[int] = mapped_column(primary_key=True)
-    sport_id: Mapped[int] = mapped_column(ForeignKey("sport.id"))
+    sport_slug: Mapped[str]
     league: Mapped[str]
     home: Mapped[str]
     away: Mapped[str]
     starts_at: Mapped[datetime]
-    odd_p1: Mapped[float]  # Победа хозяев
-    odd_x: Mapped[float]  # Ничья
-    odd_p2: Mapped[float]  # Победа гостей
+    odd_p1: Mapped[float]
+    odd_x: Mapped[float | None] = mapped_column(default=None)
+    odd_p2: Mapped[float]
     is_active: Mapped[bool] = mapped_column(default=True)
+    status: Mapped[str] = mapped_column(default="upcoming")
+    home_score: Mapped[int | None] = mapped_column(default=None)
+    away_score: Mapped[int | None] = mapped_column(default=None)
+    result: Mapped[str | None] = mapped_column(default=None)
+
 
 class Bet(Base):
     __tablename__ = "bet"
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[User] = mapped_column(ForeignKey("user.id"))
-    event_id: Mapped[Event] = mapped_column(ForeignKey("event.id"))
-    outcome: Mapped[str]  # "p1", "x", "p2"
-    amount: Mapped[float]  # сумма ставки
-    odd: Mapped[float]  # коэффициент на момент ставки
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    event_id: Mapped[int] = mapped_column(ForeignKey("event.id"))
+    outcome: Mapped[str]
+    amount: Mapped[float]
+    odd: Mapped[float]
+    status: Mapped[str] = mapped_column(default="pending")
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
 
 class LoginSession(Base):
     __tablename__ = "login_session"
@@ -55,5 +66,6 @@ class LoginSession(Base):
     secret: Mapped[str]
     expires_at: Mapped[datetime]
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+
 
 

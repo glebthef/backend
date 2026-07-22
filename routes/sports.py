@@ -7,76 +7,54 @@ from models import Sport
 from schemas.sports import SportCreate, SportResponse
 
 router = APIRouter()
+
+
 @router.post("/sports", response_model=SportResponse)
 async def create_sport(
         sport_data: Annotated[SportCreate, Body()],
-        session:Annotated[AsyncSession, Depends(get_session)]
+        session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    new_sport=Sport(
-        name=sport_data.name,
-        icon=sport_data.icon,
-        slug=sport_data.slug,
-    )
+    new_sport = Sport(**sport_data.model_dump())
     session.add(new_sport)
     await session.commit()
-    return SportResponse(
-        id=new_sport.id,
-        name=new_sport.name,
-        icon=new_sport.icon,
-        slug=new_sport.slug,
-    )
+    await session.refresh(new_sport)
+    return new_sport
+
+
+@router.get("/sports", response_model=list[SportResponse])
+async def get_all_sports(session: Annotated[AsyncSession, Depends(get_session)]):
+    return list(await session.scalars(select(Sport)))
+
 
 @router.get("/sports/{sport_id}", response_model=SportResponse)
-async def get_sport(
-        sport_id: int,
-        session: Annotated[AsyncSession, Depends(get_session)]
-):
-    stmt = select(Sport).where(Sport.id == sport_id)
-    sport = await session.scalar(stmt)
-    await session.commit()
-    return SportResponse(
-        id=sport.id,
-        name=sport.name,
-        icon=sport.icon,
-        slug=sport.slug,
-    )
-@router.get("/sports", response_model=list[SportResponse])
-async def get_sports(
-        session: Annotated[AsyncSession, Depends(get_session)]
-):
-    stmt = select(Sport)
-    sports = await session.scalars(stmt)
-    await session.commit()
-    return list(sports)
+async def get_sport(sport_id: int, session: Annotated[AsyncSession, Depends(get_session)]):
+    sport = await session.scalar(select(Sport).where(Sport.id == sport_id))
+    if sport is None:
+        raise HTTPException(404, "Sport not found")
+    return sport
+
 
 @router.put("/sports/{sport_id}", response_model=SportResponse)
 async def update_sport(
         sport_id: int,
         sport_data: Annotated[SportCreate, Body()],
-        session: Annotated[AsyncSession, Depends(get_session)]
+        session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    stmt = select(Sport).where(Sport.id == sport_id)
-    sport = await session.scalar(stmt)
+    sport = await session.scalar(select(Sport).where(Sport.id == sport_id))
     if sport is None:
-        raise HTTPException(status_code=404, detail="Sport not found")
-    sport.name = sport_data.name
-    sport.icon = sport_data.icon
-    sport.slug = sport_data.slug
+        raise HTTPException(404, "Sport not found")
+    for k, v in sport_data.model_dump().items():
+        setattr(sport, k, v)
     await session.commit()
-    return SportResponse(
-        name=sport.name,
-        icon=sport.icon,
-        slug=sport.slug,
-    )
-@router.delete("/sports/{sport_id}", response_model=SportResponse)
-async def delete_sport(
-        sport_id: int,
-        session: Annotated[AsyncSession, Depends(get_session)]
-):
-    stmt = select(Sport).where(Sport.id == sport_id)
-    sport = await session.scalar(stmt)
+    await session.refresh(sport)
+    return sport
+
+
+@router.delete("/sports/{sport_id}")
+async def delete_sport(sport_id: int, session: Annotated[AsyncSession, Depends(get_session)]):
+    sport = await session.scalar(select(Sport).where(Sport.id == sport_id))
     if sport is None:
-        raise HTTPException(status_code=404, detail="Sport not found")
+        raise HTTPException(404, "Sport not found")
     await session.delete(sport)
     await session.commit()
     return {"detail": "Sport deleted"}

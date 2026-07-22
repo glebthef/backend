@@ -1,12 +1,15 @@
 from pydantic import BaseModel
 
+
 class SportCreate(BaseModel):
-    name:str
-    icon:str
-    slug:str
+    name: str
+    icon: str
+    slug: str
+
 
 class SportResponse(BaseModel):
-    id:int
-    name:str
-    icon:str
-    slug:str
+    model_config = {"from_attributes": True}
+    id: int
+    name: str
+    icon: str
+    slug: str

@@ -1,10 +1,13 @@
 from pydantic import BaseModel
 
+
 class UserCreate(BaseModel):
-   login:str
-   password: str
+    login: str
+    password: str
+
 
 class UserResponse(BaseModel):
-    id:int
-    login:str
-    balance:float
+    model_config = {"from_attributes": True}
+    id: int
+    login: str
+    balance: float
