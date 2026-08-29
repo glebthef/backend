@@ -1,5 +1,7 @@
+from dataclasses import Field
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 
 
 class BetCreate(BaseModel):
@@ -13,7 +15,7 @@ class BetResponse(BaseModel):
     id: int
     event_id: int
     outcome: str
-    amount: float
+    amount: float= Field(gt=0)
     odd: float
     status: str
     created_at: datetime
