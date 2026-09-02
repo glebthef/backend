@@ -2,7 +2,8 @@ from uvicorn import run
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import user, sports, events, bets, sessions
-
+from dotenv import load_dotenv
+load_dotenv()
 app = FastAPI(title="PrimeBet API")
 
 app.add_middleware(

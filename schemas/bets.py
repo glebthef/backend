@@ -1,13 +1,11 @@
-from dataclasses import Field
 from datetime import datetime
 from pydantic import BaseModel, Field
-
 
 
 class BetCreate(BaseModel):
     event_id: int
     outcome: str
-    amount: float
+    amount: float = Field(gt=0, description="Сумма ставки должна быть больше 0")
 
 
 class BetResponse(BaseModel):
@@ -15,7 +13,7 @@ class BetResponse(BaseModel):
     id: int
     event_id: int
     outcome: str
-    amount: float= Field(gt=0)
+    amount: float
     odd: float
     status: str
     created_at: datetime
