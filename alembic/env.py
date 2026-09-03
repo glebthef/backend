@@ -1,9 +1,19 @@
+import os
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 from models import Base
 
 config = context.config
+
+# In deployment (docker-compose) the app connects via DATABASE_URL, which
+# points at the "db" service host, not the alembic.ini default of
+# 127.0.0.1 -- that only resolves inside the same container as Postgres.
+# Alembic runs synchronously, so swap the app's asyncpg driver for psycopg.
+database_url = os.environ.get("DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url.replace("+asyncpg", "+psycopg"))
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
