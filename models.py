@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import ForeignKey, Numeric
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -55,23 +55,17 @@ class Event(Base):
     home_score: Mapped[int | None] = mapped_column(default=None)
     away_score: Mapped[int | None] = mapped_column(default=None)
     result: Mapped[str | None] = mapped_column(default=None)
-    total_value: Mapped[float | None] = mapped_column(default=None)
-    odd_total_over: Mapped[float | None] = mapped_column(default=None)
-    odd_total_under: Mapped[float | None] = mapped_column(default=None)
-    handicap_value: Mapped[float | None] = mapped_column(default=None)
-    odd_handicap_home: Mapped[float | None] = mapped_column(default=None)
-    odd_handicap_away: Mapped[float | None] = mapped_column(default=None)
 
 
 class Bet(Base):
     __tablename__ = "bet"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
-    type: Mapped[str] = mapped_column(default="single")   # single | express
+    type: Mapped[str] = mapped_column(default="single")  # single | express
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     combined_odd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
     potential_payout: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost
+    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost | refund | cancelled
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -82,7 +76,11 @@ class BetLeg(Base):
     event_id: Mapped[int] = mapped_column(ForeignKey("event.id"))
     outcome: Mapped[str]
     odd: Mapped[Decimal] = mapped_column(Numeric(6, 2))
-    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost
+    # Snapshot of the event's total/handicap line at the moment the bet was
+    # placed, so settlement is correct even if an admin edits the event's
+    # line afterwards. Null for p1/x/p2 legs.
+    line_value: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
+    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost | refund | cancelled
 
 
 class LoginSession(Base):

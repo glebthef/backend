@@ -1,14 +1,14 @@
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies import get_session, get_authenticated_user
 from models import Bet, BetLeg, Event, User
-from schemas.bets import SingleBetCreate, ExpressBetCreate, BetResponse
+from schemas.bets import SingleBetCreate, ExpressBetCreate, BetResponse, BetLegResponse
 
 router = APIRouter()
 
@@ -35,8 +35,39 @@ def get_odd_for_outcome(event: Event, outcome: str) -> Decimal | None:
     return mapping.get(outcome)
 
 
+def get_line_value_for_outcome(event: Event, outcome: str) -> Decimal | None:
+    if outcome in ("total_over", "total_under"):
+        return event.total_value
+    if outcome in ("handicap_home", "handicap_away"):
+        return event.handicap_value
+    return None
+
+
 def check_conflict(a: str, b: str) -> bool:
     return any(a in g and b in g for g in CONFLICT_GROUPS)
+
+
+def check_event_biddable(event: Event, event_id: int) -> None:
+    if event is None or not event.is_active:
+        raise HTTPException(404, f"Event {event_id} not found or inactive")
+    if event.status == "finished":
+        raise HTTPException(400, f"Event {event_id} has already finished")
+    if event.starts_at <= datetime.utcnow():
+        raise HTTPException(400, f"Event {event_id} has already started")
+
+
+async def lock_user(session: AsyncSession, user_id: int) -> User:
+    # populate_existing is required: get_authenticated_user already loaded
+    # this User into the session's identity map *before* the lock was taken,
+    # so without it SQLAlchemy would hand back that stale (pre-lock) balance
+    # instead of the fresh, just-locked row -- a real double-spend race on
+    # concurrent bets otherwise.
+    stmt = (
+        select(User).where(User.id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return await session.scalar(stmt)
 
 
 @router.post("/users/{user_id}/bets/single", response_model=BetResponse)
@@ -50,8 +81,7 @@ async def create_single_bet(
         raise HTTPException(403, "Access denied")
 
     event = await session.scalar(select(Event).where(Event.id == bet_data.event_id))
-    if event is None or not event.is_active:
-        raise HTTPException(404, "Event not found or inactive")
+    check_event_biddable(event, bet_data.event_id)
 
     if bet_data.outcome not in VALID_OUTCOMES:
         raise HTTPException(400, "Invalid outcome")
@@ -61,10 +91,6 @@ async def create_single_bet(
         raise HTTPException(400, f"Outcome '{bet_data.outcome}' not available")
 
     amount = bet_data.amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-    if authenticated_user.balance < amount:
-        raise HTTPException(400, "Not enough balance")
-
 
     existing = await session.scalar(
         select(BetLeg).join(Bet).where(
@@ -79,7 +105,10 @@ async def create_single_bet(
 
     potential = (amount * odd).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    authenticated_user.balance -= amount
+    user = await lock_user(session, user_id)
+    if user.balance < amount:
+        raise HTTPException(400, "Not enough balance")
+    user.balance -= amount
 
     bet = Bet(
         user_id=user_id,
@@ -91,12 +120,14 @@ async def create_single_bet(
     session.add(bet)
     await session.flush()
 
-    leg = BetLeg(bet_id=bet.id, event_id=bet_data.event_id, outcome=bet_data.outcome, odd=odd)
+    leg = BetLeg(
+        bet_id=bet.id, event_id=bet_data.event_id, outcome=bet_data.outcome,
+        odd=odd, line_value=get_line_value_for_outcome(event, bet_data.outcome),
+    )
     session.add(leg)
 
     await session.commit()
     await session.refresh(bet)
-
 
     legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet.id)))
     return _bet_to_response(bet, legs)
@@ -125,8 +156,7 @@ async def create_express_bet(
             raise HTTPException(400, f"Invalid outcome: {leg.outcome}")
 
         event = await session.scalar(select(Event).where(Event.id == leg.event_id))
-        if event is None or not event.is_active:
-            raise HTTPException(404, f"Event {leg.event_id} not found or inactive")
+        check_event_biddable(event, leg.event_id)
 
         odd = get_odd_for_outcome(event, leg.outcome)
         if odd is None:
@@ -155,19 +185,19 @@ async def create_express_bet(
         if existing:
             raise HTTPException(400, f"Вы уже сделали ставку на исход '{leg.outcome}' события {leg.event_id}")
 
-        validated_legs.append((leg.event_id, leg.outcome, odd))
+        validated_legs.append((leg.event_id, leg.outcome, odd, get_line_value_for_outcome(event, leg.outcome)))
 
     combined_odd = Decimal("1")
-    for _, _, odd in validated_legs:
+    for _, _, odd, _ in validated_legs:
         combined_odd *= odd
     combined_odd = combined_odd.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
     potential = (amount * combined_odd).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    if authenticated_user.balance < amount:
+    user = await lock_user(session, user_id)
+    if user.balance < amount:
         raise HTTPException(400, "Not enough balance")
-
-    authenticated_user.balance -= amount
+    user.balance -= amount
 
     bet = Bet(
         user_id=user_id,
@@ -179,8 +209,8 @@ async def create_express_bet(
     session.add(bet)
     await session.flush()
 
-    for event_id, outcome, odd in validated_legs:
-        leg = BetLeg(bet_id=bet.id, event_id=event_id, outcome=outcome, odd=odd)
+    for event_id, outcome, odd, line_value in validated_legs:
+        leg = BetLeg(bet_id=bet.id, event_id=event_id, outcome=outcome, odd=odd, line_value=line_value)
         session.add(leg)
 
     await session.commit()
@@ -224,10 +254,16 @@ async def cancel_bet(
     if bet is None:
         raise HTTPException(404, "Bet not found")
     if bet.status != "pending":
-        raise HTTPException(400, "Cannot cancel settled bet")
+        raise HTTPException(400, "Cannot cancel a settled bet")
 
-    authenticated_user.balance += bet.amount
-    await session.delete(bet)
+    legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet_id)))
+
+    user = await lock_user(session, user_id)
+    user.balance += bet.amount
+    bet.status = "cancelled"
+    for leg in legs:
+        leg.status = "cancelled"
+
     await session.commit()
     return {"detail": "Bet cancelled"}
 
@@ -243,9 +279,6 @@ def _bet_to_response(bet: Bet, legs: list[BetLeg]) -> BetResponse:
         created_at=bet.created_at,
         legs=[BetLegResponse(
             id=l.id, event_id=l.event_id,
-            outcome=l.outcome, odd=l.odd, status=l.status
+            outcome=l.outcome, odd=l.odd, line_value=l.line_value, status=l.status,
         ) for l in legs],
     )
-
-
-from schemas.bets import BetLegResponse

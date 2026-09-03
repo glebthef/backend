@@ -48,19 +48,12 @@ class EventResponse(BaseModel):
     home_score: int | None
     away_score: int | None
     result: str | None
-    total_value: float | None
-    odd_total_over: float | None
-    odd_total_under: float | None
-    handicap_value: float | None
-    odd_handicap_home: float | None
-    odd_handicap_away: float | None
 
     @field_serializer("starts_at")
     def serialize_starts_at(self, dt: datetime) -> str:
-        # All datetimes are stored naive-but-UTC; without an explicit "Z"
-        # a browser's Date() parses this as *local* time, silently shifting
-        # every live/finished check and displayed kickoff time by the
-        # viewer's UTC offset.
+        # Stored naive-but-UTC; without an explicit "Z" a browser's Date()
+        # parses this as *local* time, silently shifting every live/finished
+        # check and displayed kickoff time by the viewer's UTC offset.
         return dt.isoformat() + "Z"
 
 

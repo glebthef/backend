@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Annotated
 from argon2 import PasswordHasher
 from fastapi import APIRouter, Depends, Body, HTTPException
@@ -17,7 +18,7 @@ async def create_user(
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ph = PasswordHasher()
-    new_user = User(login=user_data.login, password_hash=ph.hash(user_data.password), balance=0.0)
+    new_user = User(login=user_data.login, password_hash=ph.hash(user_data.password), balance=Decimal("0.00"))
     session.add(new_user)
     try:
         await session.commit()
@@ -39,7 +40,7 @@ async def get_user(user_id: int, session: Annotated[AsyncSession, Depends(get_se
 @router.patch("/users/{user_id}/balance", response_model=UserResponse)
 async def update_balance(
         user_id: int,
-        amount: Annotated[float, Body(embed=True)],
+        amount: Annotated[Decimal, Body(embed=True)],
         authenticated_user: Annotated[User, Depends(get_authenticated_user)],  # теперь требует авторизацию
         session: Annotated[AsyncSession, Depends(get_session)],
 ):

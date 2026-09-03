@@ -3,7 +3,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies import get_session
@@ -101,17 +100,7 @@ async def finish_event(
         raise HTTPException(400, "Event already finished")
 
     hs, as_ = data.home_score, data.away_score
-    total = hs + as_
-
-    result_map = {
-        "p1":            hs > as_,
-        "x":             hs == as_,
-        "p2":            hs < as_,
-        "total_over":    total > float(event.total_value or 2.5),
-        "total_under":   total < float(event.total_value or 2.5),
-        "handicap_home": (hs + float(event.handicap_value or 1.0)) > as_,
-        "handicap_away": (hs + float(event.handicap_value or 1.0)) < as_,
-    }
+    total = Decimal(hs + as_)
     main_result = "p1" if hs > as_ else ("p2" if hs < as_ else "x")
 
     event.home_score = hs
@@ -123,48 +112,78 @@ async def finish_event(
     # eligibility is decided from status/starts_at in routes/bets.py.
 
     legs = list(await session.scalars(
-        select(BetLeg).where(BetLeg.event_id == event_id)
+        select(BetLeg).where(BetLeg.event_id == event_id, BetLeg.status == "pending")
     ))
 
     for leg in legs:
-        leg.status = "won" if result_map.get(leg.outcome, False) else "lost"
+        if leg.outcome in ("p1", "x", "p2"):
+            leg.status = "won" if leg.outcome == main_result else "lost"
+        elif leg.outcome in ("total_over", "total_under"):
+            line = leg.line_value if leg.line_value is not None else (event.total_value or Decimal("2.5"))
+            if total == line:
+                leg.status = "refund"
+            elif leg.outcome == "total_over":
+                leg.status = "won" if total > line else "lost"
+            else:
+                leg.status = "won" if total < line else "lost"
+        else:  # handicap_home / handicap_away
+            line = leg.line_value if leg.line_value is not None else (event.handicap_value or Decimal("1.0"))
+            diff = (Decimal(hs) + line) - Decimal(as_)
+            if diff == 0:
+                leg.status = "refund"
+            elif leg.outcome == "handicap_home":
+                leg.status = "won" if diff > 0 else "lost"
+            else:
+                leg.status = "won" if diff < 0 else "lost"
 
     await session.flush()
 
-
-    affected_bet_ids = {leg.bet_id for leg in legs}
-
-    for bet_id in affected_bet_ids:
+    bets_won, bets_lost, bets_refunded = 0, 0, 0
+    for bet_id in {leg.bet_id for leg in legs}:
         bet = await session.scalar(select(Bet).where(Bet.id == bet_id))
         if bet is None or bet.status != "pending":
             continue
 
-        all_legs = list(await session.scalars(
-            select(BetLeg).where(BetLeg.bet_id == bet_id)
-        ))
-
+        all_legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet_id)))
         statuses = [l.status for l in all_legs]
 
+        # A single lost leg kills the whole express immediately -- no need to
+        # wait for the bet's other events to finish, the parlay can't win.
         if "lost" in statuses:
             bet.status = "lost"
-        elif all(s == "won" for s in statuses):
-            bet.status = "won"
-            user = await session.scalar(select(User).where(User.id == bet.user_id))
+            bets_lost += 1
+            continue
+
+        if "pending" in statuses:
+            continue  # other legs of this (express) bet are on events that haven't finished yet
+
+        user = await session.scalar(select(User).where(User.id == bet.user_id).with_for_update())
+        if all(s == "refund" for s in statuses):
+            bet.status = "refund"
             if user:
-                payout = (bet.amount * bet.combined_odd).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
+                user.balance += bet.amount
+            bets_refunded += 1
+        else:
+            payout_odd = Decimal("1")
+            for l in all_legs:
+                if l.status == "won":
+                    payout_odd *= l.odd
+            payout = (bet.amount * payout_odd).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            bet.status = "won"
+            if user:
                 user.balance += payout
+            bets_won += 1
 
     await session.commit()
-
-    won_legs = sum(1 for l in legs if l.status == "won")
-    lost_legs = sum(1 for l in legs if l.status == "lost")
 
     return {
         "result": main_result,
         "score": f"{hs}:{as_}",
-        "total_goals": total,
-        "legs_won": won_legs,
-        "legs_lost": lost_legs,
+        "total_goals": int(total),
+        "legs_won": sum(1 for l in legs if l.status == "won"),
+        "legs_lost": sum(1 for l in legs if l.status == "lost"),
+        "legs_refunded": sum(1 for l in legs if l.status == "refund"),
+        "bets_won": bets_won,
+        "bets_lost": bets_lost,
+        "bets_refunded": bets_refunded,
     }
