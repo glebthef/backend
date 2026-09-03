@@ -11,10 +11,12 @@ class EventCreate(BaseModel):
     odd_p1: float
     odd_x: float | None = None
     odd_p2: float
-    total_value: float | None = None
+    # Тотал
+    total_value: float | None = 2.5
     odd_total_over: float | None = None
     odd_total_under: float | None = None
-    handicap_value: float | None = None
+    # Фора
+    handicap_value: float | None = 1.0
     odd_handicap_home: float | None = None
     odd_handicap_away: float | None = None
 
@@ -35,6 +37,12 @@ class EventResponse(BaseModel):
     odd_p1: float
     odd_x: float | None
     odd_p2: float
+    total_value: float | None
+    odd_total_over: float | None
+    odd_total_under: float | None
+    handicap_value: float | None
+    odd_handicap_home: float | None
+    odd_handicap_away: float | None
     is_active: bool
     status: str
     home_score: int | None

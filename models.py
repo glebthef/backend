@@ -1,13 +1,16 @@
+import os
 from datetime import datetime
-from sqlalchemy import ForeignKey
+from decimal import Decimal
+from sqlalchemy import ForeignKey, Numeric
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-
-engine = create_async_engine(
-    "postgresql+asyncpg://postgres:6996@127.0.0.1:5432/primebet",
-    echo=True,
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/primebet"
 )
+
+engine = create_async_engine(DATABASE_URL, echo=False)
 
 
 class Base(DeclarativeBase):
@@ -19,7 +22,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     login: Mapped[str] = mapped_column(unique=True)
     password_hash: Mapped[str]
-    balance: Mapped[float] = mapped_column(default=0.0)
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
 
 
 class Sport(Base):
@@ -38,9 +41,15 @@ class Event(Base):
     home: Mapped[str]
     away: Mapped[str]
     starts_at: Mapped[datetime]
-    odd_p1: Mapped[float]
-    odd_x: Mapped[float | None] = mapped_column(default=None)
-    odd_p2: Mapped[float]
+    odd_p1: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    odd_x: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
+    odd_p2: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    total_value: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=Decimal("2.5"))
+    odd_total_over: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
+    odd_total_under: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
+    handicap_value: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=Decimal("1.0"))
+    odd_handicap_home: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
+    odd_handicap_away: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
     is_active: Mapped[bool] = mapped_column(default=True)
     status: Mapped[str] = mapped_column(default="upcoming")
     home_score: Mapped[int | None] = mapped_column(default=None)
@@ -58,12 +67,12 @@ class Bet(Base):
     __tablename__ = "bet"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
-    bet_type: Mapped[str] = mapped_column(default="single")
-    amount: Mapped[float]
-    combined_odd: Mapped[float]
-    status: Mapped[str] = mapped_column(default="pending")
+    type: Mapped[str] = mapped_column(default="single")   # single | express
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    combined_odd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    potential_payout: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    legs: Mapped[list["BetLeg"]] = relationship(back_populates="bet", order_by="BetLeg.id")
 
 
 class BetLeg(Base):
@@ -72,10 +81,8 @@ class BetLeg(Base):
     bet_id: Mapped[int] = mapped_column(ForeignKey("bet.id"))
     event_id: Mapped[int] = mapped_column(ForeignKey("event.id"))
     outcome: Mapped[str]
-    odd: Mapped[float]
-    line_value: Mapped[float | None] = mapped_column(default=None)
-    status: Mapped[str] = mapped_column(default="pending")
-    bet: Mapped["Bet"] = relationship(back_populates="legs")
+    odd: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost
 
 
 class LoginSession(Base):
@@ -84,6 +91,3 @@ class LoginSession(Base):
     secret: Mapped[str]
     expires_at: Mapped[datetime]
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
-
-
-

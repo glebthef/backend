@@ -1,32 +1,34 @@
 from datetime import datetime
-from pydantic import BaseModel, computed_field, field_serializer, field_validator
-
-VALID_OUTCOMES = {
-    "p1", "x", "p2",
-    "total_over", "total_under",
-    "handicap_home", "handicap_away",
-}
-
-# Same-match outcomes that bet against each other and can never both be true.
-# Picking one outcome per group on the same event is a normal same-game
-# combo (e.g. p1 + total_over); picking two from the same group is not.
-CONFLICT_GROUPS = [
-    {"p1", "x", "p2"},
-    {"total_over", "total_under"},
-    {"handicap_home", "handicap_away"},
-]
+from decimal import Decimal
+from pydantic import BaseModel, Field
 
 
-def _outcomes_conflict(a: str, b: str) -> bool:
-    if a == b:
-        return True
-    return any(a in g and b in g for g in CONFLICT_GROUPS)
-
-
-class BetCreateSingle(BaseModel):
+class SingleBetCreate(BaseModel):
     event_id: int
     outcome: str
-    amount: float
+    amount: Decimal = Field(gt=0)
+
+
+
+class ExpressLeg(BaseModel):
+    event_id: int
+    outcome: str
+
+
+class ExpressBetCreate(BaseModel):
+    amount: Decimal = Field(gt=0)
+    legs: list[ExpressLeg] = Field(min_length=2)
+
+
+
+
+class BetLegResponse(BaseModel):
+    model_config = {"from_attributes": True}
+    id: int
+    event_id: int
+    outcome: str
+    odd: Decimal
+    status: str
 
     @field_validator("amount")
     @classmethod
@@ -98,18 +100,10 @@ class BetLegResponse(BaseModel):
 class BetResponse(BaseModel):
     model_config = {"from_attributes": True}
     id: int
-    bet_type: str
-    amount: float
-    combined_odd: float
+    type: str
+    amount: Decimal
+    combined_odd: Decimal
+    potential_payout: Decimal
     status: str
     created_at: datetime
-    legs: list[BetLegResponse]
-
-    @field_serializer("created_at")
-    def serialize_created_at(self, dt: datetime) -> str:
-        return dt.isoformat() + "Z"
-
-    @computed_field
-    @property
-    def potential_payout(self) -> float:
-        return round(self.amount * self.combined_odd, 2)
+    legs: list[BetLegResponse] = []

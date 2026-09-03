@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 from fastapi import Header, HTTPException, Depends
 from sqlalchemy import select
@@ -24,5 +25,13 @@ async def get_authenticated_user(
     )
     if login_session is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+
+    if login_session.expires_at < datetime.utcnow():
+        await session.delete(login_session)
+        await session.commit()
+        raise HTTPException(status_code=401, detail="Session expired")
+
     user = await session.scalar(select(User).where(User.id == login_session.user_id))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     return user
