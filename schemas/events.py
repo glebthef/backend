@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_serializer, field_validator
 
 
 class EventCreate(BaseModel):
@@ -11,6 +11,12 @@ class EventCreate(BaseModel):
     odd_p1: float
     odd_x: float | None = None
     odd_p2: float
+    total_value: float | None = None
+    odd_total_over: float | None = None
+    odd_total_under: float | None = None
+    handicap_value: float | None = None
+    odd_handicap_home: float | None = None
+    odd_handicap_away: float | None = None
 
     @field_validator("starts_at")
     @classmethod
@@ -34,6 +40,20 @@ class EventResponse(BaseModel):
     home_score: int | None
     away_score: int | None
     result: str | None
+    total_value: float | None
+    odd_total_over: float | None
+    odd_total_under: float | None
+    handicap_value: float | None
+    odd_handicap_home: float | None
+    odd_handicap_away: float | None
+
+    @field_serializer("starts_at")
+    def serialize_starts_at(self, dt: datetime) -> str:
+        # All datetimes are stored naive-but-UTC; without an explicit "Z"
+        # a browser's Date() parses this as *local* time, silently shifting
+        # every live/finished check and displayed kickoff time by the
+        # viewer's UTC offset.
+        return dt.isoformat() + "Z"
 
 
 class EventFinish(BaseModel):

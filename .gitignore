@@ -16,5 +16,6 @@ venv/
 .vscode/
 *.swp
 
+
 # Node (если есть фронтенд)
 node_modules/

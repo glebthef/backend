@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import ForeignKey
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 engine = create_async_engine(
@@ -46,18 +46,36 @@ class Event(Base):
     home_score: Mapped[int | None] = mapped_column(default=None)
     away_score: Mapped[int | None] = mapped_column(default=None)
     result: Mapped[str | None] = mapped_column(default=None)
+    total_value: Mapped[float | None] = mapped_column(default=None)
+    odd_total_over: Mapped[float | None] = mapped_column(default=None)
+    odd_total_under: Mapped[float | None] = mapped_column(default=None)
+    handicap_value: Mapped[float | None] = mapped_column(default=None)
+    odd_handicap_home: Mapped[float | None] = mapped_column(default=None)
+    odd_handicap_away: Mapped[float | None] = mapped_column(default=None)
 
 
 class Bet(Base):
     __tablename__ = "bet"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
-    event_id: Mapped[int] = mapped_column(ForeignKey("event.id"))
-    outcome: Mapped[str]
+    bet_type: Mapped[str] = mapped_column(default="single")
     amount: Mapped[float]
-    odd: Mapped[float]
+    combined_odd: Mapped[float]
     status: Mapped[str] = mapped_column(default="pending")
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    legs: Mapped[list["BetLeg"]] = relationship(back_populates="bet", order_by="BetLeg.id")
+
+
+class BetLeg(Base):
+    __tablename__ = "bet_leg"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bet_id: Mapped[int] = mapped_column(ForeignKey("bet.id"))
+    event_id: Mapped[int] = mapped_column(ForeignKey("event.id"))
+    outcome: Mapped[str]
+    odd: Mapped[float]
+    line_value: Mapped[float | None] = mapped_column(default=None)
+    status: Mapped[str] = mapped_column(default="pending")
+    bet: Mapped["Bet"] = relationship(back_populates="legs")
 
 
 class LoginSession(Base):

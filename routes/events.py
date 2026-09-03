@@ -1,9 +1,10 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies import get_session
-from models import Event, Bet, User
+from models import Event, Bet, BetLeg, User
 from schemas.events import EventCreate, EventResponse, EventFinish
 
 router = APIRouter()
@@ -23,6 +24,12 @@ async def create_event(
         odd_p1=event_data.odd_p1,
         odd_x=event_data.odd_x,
         odd_p2=event_data.odd_p2,
+        total_value=event_data.total_value,
+        odd_total_over=event_data.odd_total_over,
+        odd_total_under=event_data.odd_total_under,
+        handicap_value=event_data.handicap_value,
+        odd_handicap_home=event_data.odd_handicap_home,
+        odd_handicap_away=event_data.odd_handicap_away,
     )
     session.add(new_event)
     await session.commit()
@@ -66,6 +73,12 @@ async def update_event(
     event.odd_p1 = event_data.odd_p1
     event.odd_x = event_data.odd_x
     event.odd_p2 = event_data.odd_p2
+    event.total_value = event_data.total_value
+    event.odd_total_over = event_data.odd_total_over
+    event.odd_total_under = event_data.odd_total_under
+    event.handicap_value = event_data.handicap_value
+    event.odd_handicap_home = event_data.odd_handicap_home
+    event.odd_handicap_away = event_data.odd_handicap_away
     await session.commit()
     await session.refresh(event)
     return event
@@ -94,25 +107,70 @@ async def finish_event(
         raise HTTPException(400, "Event already finished")
 
     result = "p1" if data.home_score > data.away_score else ("p2" if data.home_score < data.away_score else "x")
+    total_goals = data.home_score + data.away_score
     event.home_score = data.home_score
     event.away_score = data.away_score
     event.result = result
     event.status = "finished"
-    event.is_active = False
+    # is_active intentionally left untouched here: it is the admin visibility
+    # flag (see delete_event), not a "still open for betting" flag. Betting
+    # eligibility is decided from status/starts_at in routes/bets.py.
 
-    bets = list(await session.scalars(select(Bet).where(Bet.event_id == event_id)))
-    won, lost = 0, 0
-    for bet in bets:
-        if bet.outcome == result:
-            bet.status = "won"
-            u = await session.scalar(select(User).where(User.id == bet.user_id))
-            if u:
-                u.balance += bet.amount * bet.odd
-            won += 1
-        else:
+    legs = list(await session.scalars(
+        select(BetLeg).where(BetLeg.event_id == event_id, BetLeg.status == "pending")
+    ))
+    for leg in legs:
+        if leg.outcome in ("p1", "x", "p2"):
+            leg.status = "won" if leg.outcome == result else "lost"
+        elif leg.outcome in ("total_over", "total_under"):
+            line = leg.line_value
+            if line is None or total_goals == line:
+                leg.status = "refund"
+            elif leg.outcome == "total_over":
+                leg.status = "won" if total_goals > line else "lost"
+            else:
+                leg.status = "won" if total_goals < line else "lost"
+        else:  # handicap_home / handicap_away
+            line = leg.line_value or 0.0
+            diff = (data.home_score + line) - data.away_score
+            if diff == 0:
+                leg.status = "refund"
+            elif leg.outcome == "handicap_home":
+                leg.status = "won" if diff > 0 else "lost"
+            else:
+                leg.status = "won" if diff < 0 else "lost"
+
+    await session.flush()
+
+    won, lost, refunded = 0, 0, 0
+    for bet_id in {leg.bet_id for leg in legs}:
+        bet = await session.scalar(
+            select(Bet).where(Bet.id == bet_id).options(selectinload(Bet.legs))
+        )
+        if bet.status != "pending" or any(l.status == "pending" for l in bet.legs):
+            continue  # other legs of this (express) bet are on events that haven't finished yet
+
+        if any(l.status == "lost" for l in bet.legs):
             bet.status = "lost"
             lost += 1
+            continue
+
+        user = await session.scalar(select(User).where(User.id == bet.user_id).with_for_update())
+        if all(l.status == "refund" for l in bet.legs):
+            bet.status = "refund"
+            if user:
+                user.balance += bet.amount
+            refunded += 1
+        else:
+            payout_odd = 1.0
+            for l in bet.legs:
+                if l.status == "won":
+                    payout_odd *= l.odd
+            bet.status = "won"
+            if user:
+                user.balance += bet.amount * payout_odd
+            won += 1
 
     await session.commit()
     return {"result": result, "score": f"{data.home_score}:{data.away_score}",
-            "bets_won": won, "bets_lost": lost}
+            "bets_won": won, "bets_lost": lost, "bets_refunded": refunded}
