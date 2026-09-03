@@ -21,4 +21,6 @@ app.include_router(bets.router, tags=["Bets"])
 app.include_router(sessions.router, tags=["Sessions"])
 
 if __name__ == "__main__":
-    run(app, host="127.0.0.1", port=8000)
+    # 0.0.0.0, not 127.0.0.1: inside a container, binding to loopback only
+    # makes the app unreachable through the mapped port from outside it.
+    run(app, host="0.0.0.0", port=8000)
