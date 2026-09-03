@@ -1,9 +1,12 @@
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
+
 from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from dependencies import get_session
-from models import Event, Bet, User
+from models import Event, Bet, BetLeg, User
 from schemas.events import EventCreate, EventResponse, EventFinish
 
 router = APIRouter()
@@ -64,10 +67,10 @@ async def update_event(
     event = await session.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise HTTPException(404, "Event not found")
-    for field in ['sport_slug','league','home','away','starts_at',
-                  'odd_p1','odd_x','odd_p2','total_value',
-                  'odd_total_over','odd_total_under',
-                  'handicap_value','odd_handicap_home','odd_handicap_away']:
+    for field in ['sport_slug', 'league', 'home', 'away', 'starts_at',
+                  'odd_p1', 'odd_x', 'odd_p2', 'total_value',
+                  'odd_total_over', 'odd_total_under',
+                  'handicap_value', 'odd_handicap_home', 'odd_handicap_away']:
         setattr(event, field, getattr(event_data, field))
     await session.commit()
     await session.refresh(event)
@@ -96,25 +99,18 @@ async def finish_event(
     if event.status == "finished":
         raise HTTPException(400, "Event already finished")
 
-    hs = data.home_score
-    as_ = data.away_score
+    hs, as_ = data.home_score, data.away_score
     total = hs + as_
 
-    # Определяем результаты всех типов исходов
     result_map = {
-        # Основной исход
-        "p1": hs > as_,
-        "x":  hs == as_,
-        "p2": hs < as_,
-        # Тотал
-        "total_over":  total > (event.total_value or 2.5),
-        "total_under": total < (event.total_value or 2.5),
-        # Фора (handicap_value применяется к хозяевам)
-        "handicap_home": (hs + (event.handicap_value or 1.0)) > as_,
-        "handicap_away": (hs + (event.handicap_value or 1.0)) < as_,
+        "p1":            hs > as_,
+        "x":             hs == as_,
+        "p2":            hs < as_,
+        "total_over":    total > float(event.total_value or 2.5),
+        "total_under":   total < float(event.total_value or 2.5),
+        "handicap_home": (hs + float(event.handicap_value or 1.0)) > as_,
+        "handicap_away": (hs + float(event.handicap_value or 1.0)) < as_,
     }
-
-    # Определяем result для основного исхода
     main_result = "p1" if hs > as_ else ("p2" if hs < as_ else "x")
 
     event.home_score = hs
@@ -123,34 +119,49 @@ async def finish_event(
     event.status = "finished"
     event.is_active = False
 
-    bets = list(await session.scalars(select(Bet).where(Bet.event_id == event_id)))
-    won, lost = 0, 0
-    for bet in bets:
-        # Для основных исходов p1/x/p2
-        if bet.outcome in ("p1", "x", "p2"):
-            bet_won = (bet.outcome == main_result)
-        # Для тотала и форы
-        elif bet.outcome in result_map:
-            bet_won = result_map[bet.outcome]
-        else:
-            bet_won = False
+    legs = list(await session.scalars(
+        select(BetLeg).where(BetLeg.event_id == event_id)
+    ))
 
-        if bet_won:
-            bet.status = "won"
-            u = await session.scalar(select(User).where(User.id == bet.user_id))
-            if u:
-                u.balance += bet.amount * bet.odd
-            won += 1
-        else:
+    for leg in legs:
+        leg.status = "won" if result_map.get(leg.outcome, False) else "lost"
+
+    await session.flush()
+
+
+    affected_bet_ids = {leg.bet_id for leg in legs}
+
+    for bet_id in affected_bet_ids:
+        bet = await session.scalar(select(Bet).where(Bet.id == bet_id))
+        if bet is None or bet.status != "pending":
+            continue
+
+        all_legs = list(await session.scalars(
+            select(BetLeg).where(BetLeg.bet_id == bet_id)
+        ))
+
+        statuses = [l.status for l in all_legs]
+
+        if "lost" in statuses:
             bet.status = "lost"
-            lost += 1
+        elif all(s == "won" for s in statuses):
+            bet.status = "won"
+            user = await session.scalar(select(User).where(User.id == bet.user_id))
+            if user:
+                payout = (bet.amount * bet.combined_odd).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                user.balance += payout
 
     await session.commit()
+
+    won_legs = sum(1 for l in legs if l.status == "won")
+    lost_legs = sum(1 for l in legs if l.status == "lost")
+
     return {
         "result": main_result,
         "score": f"{hs}:{as_}",
         "total_goals": total,
-        "total_result": "over" if result_map["total_over"] else "under",
-        "bets_won": won,
-        "bets_lost": lost,
+        "legs_won": won_legs,
+        "legs_lost": lost_legs,
     }
