@@ -84,6 +84,16 @@ class BetLeg(Base):
     status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost | refund | cancelled
 
 
+class Payment(Base):
+    __tablename__ = "payment"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    provider_payment_id: Mapped[str] = mapped_column(unique=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    status: Mapped[str] = mapped_column(default="pending")  # pending | succeeded | canceled
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+
 class ChatMessage(Base):
     __tablename__ = "chat_message"
     id: Mapped[int] = mapped_column(primary_key=True)

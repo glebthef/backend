@@ -1,11 +1,13 @@
 import os
 
+from dotenv import load_dotenv
+load_dotenv()  # до импорта routes.payments — оно читает STRIPE_SECRET_KEY при импорте
+
 from uvicorn import run
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import user, sports, events, bets, sessions, chat
-from dotenv import load_dotenv
-load_dotenv()
+from routes import user, sports, events, bets, sessions, chat, payments
+
 app = FastAPI(title="PrimeBet API")
 
 # Local dev origins are always allowed; production origin(s) come from the
@@ -28,6 +30,7 @@ app.include_router(events.router, tags=["Events"])
 app.include_router(bets.router, tags=["Bets"])
 app.include_router(sessions.router, tags=["Sessions"])
 app.include_router(chat.router, tags=["Chat"])
+app.include_router(payments.router, tags=["Payments"])
 
 if __name__ == "__main__":
     # 0.0.0.0, not 127.0.0.1: inside a container, binding to loopback only
