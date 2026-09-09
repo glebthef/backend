@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from dependencies import get_session, get_authenticated_user
+from dependencies import get_session, get_authenticated_user, get_admin_user
 from models import User
 from schemas.user import UserCreate, UserResponse
 
@@ -35,6 +35,13 @@ async def get_user(user_id: int, session: Annotated[AsyncSession, Depends(get_se
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+@router.get("/users", response_model=list[UserResponse])
+async def get_users(
+        admin: Annotated[User, Depends(get_admin_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+):
+    users = list(await session.scalars(select(User).order_by(User.login)))
+    return users
 
 
 @router.patch("/users/{user_id}/balance", response_model=UserResponse)
@@ -53,6 +60,24 @@ async def update_balance(
     await session.commit()
     await session.refresh(authenticated_user)
     return authenticated_user
+
+
+@router.patch("/users/{user_id}/ban", response_model=UserResponse)
+async def ban_user(
+        user_id: int,
+        banned: Annotated[bool, Body(embed=True)],
+        admin: Annotated[User, Depends(get_admin_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+):
+    user = await session.scalar(select(User).where(User.id == user_id))
+    if user is None:
+        raise HTTPException(404, "User not found")
+    if user.is_admin:
+        raise HTTPException(400, "Cannot ban an admin")
+    user.is_banned = banned
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 @router.delete("/users/{user_id}")

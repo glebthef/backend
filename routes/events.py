@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies import get_session
+from dependencies import get_session, get_admin_user
 from models import Event, Bet, BetLeg, User
 from schemas.events import EventCreate, EventResponse, EventFinish
 
@@ -15,6 +15,7 @@ router = APIRouter()
 @router.post("/events", response_model=EventResponse)
 async def create_event(
         event_data: Annotated[EventCreate, Body()],
+        admin: Annotated[User, Depends(get_admin_user)],
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
     new_event = Event(
@@ -51,7 +52,9 @@ async def get_all_events(
 
 
 @router.get("/events/{event_id}", response_model=EventResponse)
-async def get_event(event_id: int, session: Annotated[AsyncSession, Depends(get_session)]):
+async def get_event(
+        event_id: int, session: Annotated[AsyncSession, Depends(get_session)],
+):
     event = await session.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise HTTPException(404, "Event not found")
@@ -61,6 +64,8 @@ async def get_event(event_id: int, session: Annotated[AsyncSession, Depends(get_
 @router.put("/events/{event_id}", response_model=EventResponse)
 async def update_event(
         event_id: int,
+        admin: Annotated[User, Depends(get_admin_user)],
+
         event_data: Annotated[EventCreate, Body()],
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
@@ -78,7 +83,10 @@ async def update_event(
 
 
 @router.delete("/events/{event_id}")
-async def delete_event(event_id: int, session: Annotated[AsyncSession, Depends(get_session)]):
+async def delete_event(
+        event_id: int, session: Annotated[AsyncSession, Depends(get_session)],
+        admin: Annotated[User, Depends(get_admin_user)]
+):
     event = await session.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise HTTPException(404, "Event not found")
@@ -87,8 +95,33 @@ async def delete_event(event_id: int, session: Annotated[AsyncSession, Depends(g
     return {"detail": "Event deactivated"}
 
 
+@router.patch("/events/{event_id}/score", response_model=EventResponse)
+async def update_live_score(
+        event_id: int,
+        data: Annotated[EventFinish, Body()],
+        admin: Annotated[User, Depends(get_admin_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+):
+    # Separate from finish_event on purpose: this only records the current
+    # score for display (e.g. while the match is live) and never touches
+    # status/result or settles bets, so it can be called as many times as
+    # needed while the event is still in progress.
+    event = await session.scalar(select(Event).where(Event.id == event_id))
+    if event is None:
+        raise HTTPException(404, "Event not found")
+    if event.status == "finished":
+        raise HTTPException(400, "Event already finished")
+    event.home_score = data.home_score
+    event.away_score = data.away_score
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
 @router.post("/events/{event_id}/finish")
 async def finish_event(
+        admin: Annotated[User, Depends(get_admin_user)],
+
         event_id: int,
         data: Annotated[EventFinish, Body()],
         session: Annotated[AsyncSession, Depends(get_session)],
@@ -107,10 +140,6 @@ async def finish_event(
     event.away_score = as_
     event.result = main_result
     event.status = "finished"
-    # is_active intentionally left untouched here: it is the admin visibility
-    # flag (see delete_event), not a "still open for betting" flag. Betting
-    # eligibility is decided from status/starts_at in routes/bets.py.
-
     legs = list(await session.scalars(
         select(BetLeg).where(BetLeg.event_id == event_id, BetLeg.status == "pending")
     ))
@@ -126,7 +155,7 @@ async def finish_event(
                 leg.status = "won" if total > line else "lost"
             else:
                 leg.status = "won" if total < line else "lost"
-        else:  # handicap_home / handicap_away
+        else:
             line = leg.line_value if leg.line_value is not None else (event.handicap_value or Decimal("1.0"))
             diff = (Decimal(hs) + line) - Decimal(as_)
             if diff == 0:
@@ -146,16 +175,13 @@ async def finish_event(
 
         all_legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet_id)))
         statuses = [l.status for l in all_legs]
-
-        # A single lost leg kills the whole express immediately -- no need to
-        # wait for the bet's other events to finish, the parlay can't win.
         if "lost" in statuses:
             bet.status = "lost"
             bets_lost += 1
             continue
 
         if "pending" in statuses:
-            continue  # other legs of this (express) bet are on events that haven't finished yet
+            continue
 
         user = await session.scalar(select(User).where(User.id == bet.user_id).with_for_update())
         if all(s == "refund" for s in statuses):

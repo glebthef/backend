@@ -2,8 +2,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from dependencies import get_session
-from models import Sport
+from dependencies import get_session, get_admin_user
+from models import Sport, User
 from schemas.sports import SportCreate, SportResponse
 
 router = APIRouter()
@@ -13,6 +13,8 @@ router = APIRouter()
 async def create_sport(
         sport_data: Annotated[SportCreate, Body()],
         session: Annotated[AsyncSession, Depends(get_session)],
+        admin: Annotated[User, Depends(get_admin_user)],
+
 ):
     new_sport = Sport(**sport_data.model_dump())
     session.add(new_sport)
@@ -39,6 +41,8 @@ async def update_sport(
         sport_id: int,
         sport_data: Annotated[SportCreate, Body()],
         session: Annotated[AsyncSession, Depends(get_session)],
+        admin: Annotated[User, Depends(get_admin_user)],
+
 ):
     sport = await session.scalar(select(Sport).where(Sport.id == sport_id))
     if sport is None:
@@ -51,7 +55,11 @@ async def update_sport(
 
 
 @router.delete("/sports/{sport_id}")
-async def delete_sport(sport_id: int, session: Annotated[AsyncSession, Depends(get_session)]):
+async def delete_sport(
+        sport_id: int, session: Annotated[AsyncSession, Depends(get_session)],
+        admin: Annotated[User, Depends(get_admin_user)]
+
+):
     sport = await session.scalar(select(Sport).where(Sport.id == sport_id))
     if sport is None:
         raise HTTPException(404, "Sport not found")

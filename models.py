@@ -23,7 +23,8 @@ class User(Base):
     login: Mapped[str] = mapped_column(unique=True)
     password_hash: Mapped[str]
     balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-
+    is_admin: Mapped[bool] = mapped_column(default=False)
+    is_banned: Mapped[bool] = mapped_column(default=False)
 
 class Sport(Base):
     __tablename__ = "sport"
@@ -81,6 +82,15 @@ class BetLeg(Base):
     # line afterwards. Null for p1/x/p2 legs.
     line_value: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
     status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost | refund | cancelled
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_message"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    sender: Mapped[str]  # "user" | "support"
+    text: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
 class LoginSession(Base):

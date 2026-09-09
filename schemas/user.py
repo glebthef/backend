@@ -11,3 +11,5 @@ class UserResponse(BaseModel):
     id: int
     login: str
     balance: float
+    is_admin: bool
+    is_banned: bool

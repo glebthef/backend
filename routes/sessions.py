@@ -37,6 +37,9 @@ async def create_session(
     except VerificationError:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    if user.is_banned:
+        raise HTTPException(status_code=403, detail="Account banned")
+
     new_session = LoginSession(
         user_id=user.id,
         secret=str(uuid4()),

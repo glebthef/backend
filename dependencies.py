@@ -34,4 +34,13 @@ async def get_authenticated_user(
     user = await session.scalar(select(User).where(User.id == login_session.user_id))
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if user.is_banned:
+        raise HTTPException(status_code=403, detail="Account banned")
     return user
+async def get_admin_user(
+        user: Annotated[User, Depends(get_authenticated_user)],
+    ) ->User:
+    if not user.is_admin:
+           raise HTTPException(status_code=403, detail="Admin only")
+    return user
+

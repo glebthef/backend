@@ -1,7 +1,7 @@
 from uvicorn import run
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import user, sports, events, bets, sessions
+from routes import user, sports, events, bets, sessions, chat
 from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI(title="PrimeBet API")
@@ -19,6 +19,7 @@ app.include_router(sports.router, tags=["Sports"])
 app.include_router(events.router, tags=["Events"])
 app.include_router(bets.router, tags=["Bets"])
 app.include_router(sessions.router, tags=["Sessions"])
+app.include_router(chat.router, tags=["Chat"])
 
 if __name__ == "__main__":
     # 0.0.0.0, not 127.0.0.1: inside a container, binding to loopback only
