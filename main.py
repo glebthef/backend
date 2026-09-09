@@ -1,3 +1,5 @@
+import os
+
 from uvicorn import run
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,9 +8,15 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI(title="PrimeBet API")
 
+# Local dev origins are always allowed; production origin(s) come from the
+# environment so the same image/checkout works locally and on the server
+# without editing code, e.g. CORS_ORIGINS="http://193.178.158.110".
+default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=default_origins + extra_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
