@@ -44,24 +44,6 @@ async def get_users(
     return users
 
 
-@router.patch("/users/{user_id}/balance", response_model=UserResponse)
-async def update_balance(
-        user_id: int,
-        amount: Annotated[Decimal, Body(embed=True)],
-        authenticated_user: Annotated[User, Depends(get_authenticated_user)],  # теперь требует авторизацию
-        session: Annotated[AsyncSession, Depends(get_session)],
-):
-
-    if authenticated_user.id != user_id:
-        raise HTTPException(403, "Access denied")
-    if amount <= 0:
-        raise HTTPException(400, "Amount must be positive")
-    authenticated_user.balance += amount
-    await session.commit()
-    await session.refresh(authenticated_user)
-    return authenticated_user
-
-
 @router.patch("/users/{user_id}/ban", response_model=UserResponse)
 async def ban_user(
         user_id: int,

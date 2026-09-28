@@ -40,6 +40,14 @@ def test_user_cannot_read_someone_elses_bets(client, make_user):
     assert r.status_code == 403
 
 
+def test_user_cannot_top_up_balance_directly(client, make_user, balance_of):
+    # Пополнить баланс можно только через подтверждённый Stripe-платёж.
+    alice = make_user("alice")
+    r = client.patch(f"/users/{alice['id']}/balance", json={"amount": 1000000}, headers=alice["headers"])
+    assert r.status_code in (403, 404, 405)
+    assert balance_of(alice["id"]) == 0
+
+
 def test_banned_user_is_locked_out(client, make_user):
     admin = make_user("admin", admin=True)
     alice = make_user("alice")

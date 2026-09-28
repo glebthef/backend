@@ -48,6 +48,16 @@ def test_single_bet_deducts_balance_and_uses_server_odds(client, make_user, make
     assert balance_of(alice["id"]) == Decimal("900.00")
 
 
+def test_placed_bet_cannot_be_cancelled(client, make_user, make_event, balance_of):
+    # Иначе можно было бы дождаться, что команда проигрывает, и забрать деньги.
+    alice = make_user("alice", balance="1000")
+    bet_id = place_single(client, alice, make_event(), "p1", 100).json()["id"]
+
+    r = client.delete(f"/users/{alice['id']}/bets/{bet_id}", headers=alice["headers"])
+    assert r.status_code in (404, 405)
+    assert balance_of(alice["id"]) == Decimal("900.00")
+
+
 def test_bet_rejected_when_balance_is_insufficient(client, make_user, make_event, balance_of):
     alice = make_user("alice", balance="50")
     event_id = make_event()

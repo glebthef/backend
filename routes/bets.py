@@ -240,34 +240,6 @@ async def get_bets(
     return result
 
 
-@router.delete("/users/{user_id}/bets/{bet_id}")
-async def cancel_bet(
-        user_id: int,
-        bet_id: int,
-        authenticated_user: Annotated[User, Depends(get_authenticated_user)],
-        session: Annotated[AsyncSession, Depends(get_session)],
-):
-    if authenticated_user.id != user_id:
-        raise HTTPException(403, "Access denied")
-
-    bet = await session.scalar(select(Bet).where(Bet.id == bet_id, Bet.user_id == user_id))
-    if bet is None:
-        raise HTTPException(404, "Bet not found")
-    if bet.status != "pending":
-        raise HTTPException(400, "Cannot cancel a settled bet")
-
-    legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet_id)))
-
-    user = await lock_user(session, user_id)
-    user.balance += bet.amount
-    bet.status = "cancelled"
-    for leg in legs:
-        leg.status = "cancelled"
-
-    await session.commit()
-    return {"detail": "Bet cancelled"}
-
-
 def _bet_to_response(bet: Bet, legs: list[BetLeg]) -> BetResponse:
     return BetResponse(
         id=bet.id,
