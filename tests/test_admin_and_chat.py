@@ -1,0 +1,42 @@
+"""Права администратора и чат поддержки."""
+from datetime import datetime, timedelta, timezone
+
+
+def test_only_admin_can_create_events(client, make_user):
+    admin = make_user("admin", admin=True)
+    alice = make_user("alice")
+    event = {
+        "sport_slug": "football",
+        "league": "АПЛ",
+        "home": "Arsenal",
+        "away": "Chelsea",
+        "starts_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        "odd_p1": 2.1,
+        "odd_x": 3.3,
+        "odd_p2": 3.6,
+    }
+
+    assert client.post("/events", json=event, headers=alice["headers"]).status_code == 403
+
+    r = client.post("/events", json=event, headers=admin["headers"])
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "upcoming"
+
+
+def test_support_chat_roundtrip(client, make_user):
+    admin = make_user("admin", admin=True)
+    alice = make_user("alice")
+    bob = make_user("bob")
+
+    r = client.post(f"/users/{alice['id']}/chat", json={"text": "Не пришёл выигрыш"}, headers=alice["headers"])
+    assert r.status_code == 200 and r.json()["sender"] == "user"
+
+    # Админ пишет в тред Алисы — сообщение уходит от имени поддержки.
+    r = client.post(f"/users/{alice['id']}/chat", json={"text": "Сейчас проверим"}, headers=admin["headers"])
+    assert r.status_code == 200 and r.json()["sender"] == "support"
+
+    r = client.get(f"/users/{alice['id']}/chat", headers=alice["headers"])
+    assert [m["sender"] for m in r.json()] == ["user", "support"]
+
+    # Чужую переписку читать нельзя.
+    assert client.get(f"/users/{alice['id']}/chat", headers=bob["headers"]).status_code == 403
