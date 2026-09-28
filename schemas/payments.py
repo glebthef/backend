@@ -21,3 +21,9 @@ class DepositResponse(BaseModel):
 class DepositStatusResponse(BaseModel):
     status: str
     balance: float
+
+
+class DepositSyncResponse(BaseModel):
+    credited: float  # сколько зачислено этой проверкой
+    pending: int     # сколько платежей всё ещё ждут оплаты
+    balance: float

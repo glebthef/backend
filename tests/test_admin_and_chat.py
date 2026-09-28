@@ -60,3 +60,13 @@ def test_support_chat_roundtrip(client, make_user):
 
     # Чужую переписку читать нельзя.
     assert client.get(f"/users/{alice['id']}/chat", headers=bob["headers"]).status_code == 403
+
+
+def test_event_odds_must_be_above_one(client, make_user):
+    admin = make_user("admin", admin=True)
+    event = {
+        "sport_slug": "football", "league": "АПЛ", "home": "A", "away": "B",
+        "starts_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        "odd_p1": 1.0, "odd_p2": 3.0,
+    }
+    assert client.post("/events", json=event, headers=admin["headers"]).status_code == 422

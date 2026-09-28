@@ -7,19 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies import get_session, get_authenticated_user
+from locks import lock_user
 from models import Bet, BetLeg, Event, User
 from schemas.bets import SingleBetCreate, ExpressBetCreate, BetResponse, BetLegResponse
 
 router = APIRouter()
 
 VALID_OUTCOMES = {"p1", "x", "p2", "total_over", "total_under", "handicap_home", "handicap_away"}
-
-
-CONFLICT_GROUPS = [
-    {"p1", "x", "p2"},
-    {"total_over", "total_under"},
-    {"handicap_home", "handicap_away"},
-]
 
 
 def get_odd_for_outcome(event: Event, outcome: str) -> Decimal | None:
@@ -43,10 +37,6 @@ def get_line_value_for_outcome(event: Event, outcome: str) -> Decimal | None:
     return None
 
 
-def check_conflict(a: str, b: str) -> bool:
-    return any(a in g and b in g for g in CONFLICT_GROUPS)
-
-
 def check_event_biddable(event: Event, event_id: int) -> None:
     if event is None or not event.is_active:
         raise HTTPException(404, f"Event {event_id} not found or inactive")
@@ -56,18 +46,15 @@ def check_event_biddable(event: Event, event_id: int) -> None:
         raise HTTPException(400, f"Event {event_id} has already started")
 
 
-async def lock_user(session: AsyncSession, user_id: int) -> User:
-    # populate_existing is required: get_authenticated_user already loaded
-    # this User into the session's identity map *before* the lock was taken,
-    # so without it SQLAlchemy would hand back that stale (pre-lock) balance
-    # instead of the fresh, just-locked row -- a real double-spend race on
-    # concurrent bets otherwise.
-    stmt = (
-        select(User).where(User.id == user_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    return await session.scalar(stmt)
+def check_expected_odd(expected: Decimal | None, actual: Decimal, event_id: int) -> None:
+    # Купон запоминает коэффициент в момент добавления исхода. Если админ
+    # с тех пор поменял линию, ставку нельзя молча принять по другому
+    # коэффициенту — пусть пользователь увидит новый и подтвердит заново.
+    if expected is not None and expected != actual:
+        raise HTTPException(
+            409,
+            f"Коэффициент на событие {event_id} изменился: {expected} → {actual}. Проверьте купон",
+        )
 
 
 @router.post("/users/{user_id}/bets/single", response_model=BetResponse)
@@ -89,6 +76,7 @@ async def create_single_bet(
     odd = get_odd_for_outcome(event, bet_data.outcome)
     if odd is None:
         raise HTTPException(400, f"Outcome '{bet_data.outcome}' not available")
+    check_expected_odd(bet_data.expected_odd, odd, bet_data.event_id)
 
     amount = bet_data.amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -149,7 +137,7 @@ async def create_express_bet(
     amount = bet_data.amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     validated_legs = []
-    seen_per_event: dict[int, list[str]] = {}
+    seen_events: set[int] = set()
 
     for leg in bet_data.legs:
         if leg.outcome not in VALID_OUTCOMES:
@@ -161,18 +149,14 @@ async def create_express_bet(
         odd = get_odd_for_outcome(event, leg.outcome)
         if odd is None:
             raise HTTPException(400, f"Outcome '{leg.outcome}' not available for event {leg.event_id}")
+        check_expected_odd(leg.expected_odd, odd, leg.event_id)
 
-        if leg.event_id in seen_per_event:
-            for existing_outcome in seen_per_event[leg.event_id]:
-                if check_conflict(existing_outcome, leg.outcome):
-                    raise HTTPException(
-                        400,
-                        f"Conflicting outcomes for event {leg.event_id}: "
-                        f"'{existing_outcome}' and '{leg.outcome}'"
-                    )
-            seen_per_event[leg.event_id].append(leg.outcome)
-        else:
-            seen_per_event[leg.event_id] = [leg.outcome]
+        # Классический экспресс — только из разных событий: исходы одного
+        # матча связаны (П1 и Фора 1 почти всегда играют вместе), и простое
+        # перемножение их коэффициентов дало бы завышенную выплату.
+        if leg.event_id in seen_events:
+            raise HTTPException(400, "В экспресс нельзя включать несколько исходов одного события")
+        seen_events.add(leg.event_id)
 
         existing = await session.scalar(
             select(BetLeg).join(Bet).where(

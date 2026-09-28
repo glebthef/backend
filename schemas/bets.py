@@ -3,19 +3,27 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, field_serializer
 
 
+MIN_BET = 10
+MAX_BET = 100_000
+
+
 class SingleBetCreate(BaseModel):
     event_id: int
     outcome: str
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(ge=MIN_BET, le=MAX_BET)
+    # Коэффициент, который пользователь видел в купоне. Необязателен, но если
+    # передан и не совпадает с текущим — ставка отклоняется (409).
+    expected_odd: Decimal | None = None
 
 
 class ExpressLeg(BaseModel):
     event_id: int
     outcome: str
+    expected_odd: Decimal | None = None
 
 
 class ExpressBetCreate(BaseModel):
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(ge=MIN_BET, le=MAX_BET)
     legs: list[ExpressLeg] = Field(min_length=2)
 
 

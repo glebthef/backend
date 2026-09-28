@@ -8,8 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies import get_authenticated_user, get_session
+from locks import lock_user
 from models import Payment, User
-from schemas.payments import DepositCreate, DepositResponse, DepositStatusResponse
+from schemas.payments import DepositCreate, DepositResponse, DepositStatusResponse, DepositSyncResponse
 
 router = APIRouter()
 
@@ -74,6 +75,73 @@ async def create_deposit(
     return DepositResponse(payment_id=result["id"], confirmation_url=result["url"])
 
 
+async def fetch_checkout_session(session_id: str) -> dict | None:
+    """Текущее состояние Checkout Session в Stripe или None, если Stripe
+    недоступен — тогда платёж просто останется pending до следующей проверки."""
+    if not STRIPE_SECRET_KEY:
+        return None
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(
+                f"{STRIPE_API_URL}/{session_id}",
+                auth=(STRIPE_SECRET_KEY, ""),
+                timeout=15,
+            )
+        except httpx.HTTPError:
+            return None
+    return resp.json() if resp.status_code < 400 else None
+
+
+async def apply_stripe_status(session: AsyncSession, payment: Payment) -> Decimal:
+    """Сверяет платёж со Stripe и, если он оплачен, зачисляет деньги.
+    Строка платежа должна быть заблокирована вызывающим кодом.
+    Возвращает зачисленную сумму (0, если ничего не зачислено)."""
+    if payment.status != "pending":
+        return Decimal("0")
+    remote = await fetch_checkout_session(payment.provider_payment_id)
+    if remote is None:
+        return Decimal("0")
+    if remote.get("payment_status") == "paid":
+        user = await lock_user(session, payment.user_id)
+        payment.status = "succeeded"
+        user.balance += payment.amount
+        return payment.amount
+    if remote.get("status") == "expired":
+        payment.status = "canceled"
+    return Decimal("0")
+
+
+@router.post("/users/{user_id}/deposits/sync", response_model=DepositSyncResponse)
+async def sync_deposits(
+        user_id: int,
+        authenticated_user: Annotated[User, Depends(get_authenticated_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Проверяет все незавершённые платежи пользователя. Зачисление не
+    зависит от того, вернулся ли пользователь со страницы Stripe в том же
+    браузере: достаточно открыть профиль с любого устройства."""
+    if authenticated_user.id != user_id:
+        raise HTTPException(403, "Access denied")
+
+    # FOR UPDATE: если две проверки пришли одновременно, вторая дождётся
+    # первой и уже не увидит зачисленный платёж в статусе pending.
+    payments = list(await session.scalars(
+        select(Payment)
+        .where(Payment.user_id == user_id, Payment.status == "pending")
+        .with_for_update()
+    ))
+    credited = Decimal("0")
+    for payment in payments:
+        credited += await apply_stripe_status(session, payment)
+    await session.commit()
+
+    return DepositSyncResponse(
+        credited=float(credited),
+        pending=sum(1 for p in payments if p.status == "pending"),
+        balance=float(authenticated_user.balance),
+    )
+
+
 @router.get("/users/{user_id}/deposits/{payment_id}", response_model=DepositStatusResponse)
 async def get_deposit_status(
         user_id: int,
@@ -94,26 +162,7 @@ async def get_deposit_status(
     if payment is None:
         raise HTTPException(404, "Payment not found")
 
-    if payment.status == "pending":
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.get(
-                    f"{STRIPE_API_URL}/{payment_id}",
-                    auth=(STRIPE_SECRET_KEY, ""),
-                    timeout=15,
-                )
-            except httpx.HTTPError:
-                resp = None
-
-        if resp is not None and resp.status_code < 400:
-            remote = resp.json()
-            if remote.get("payment_status") == "paid":
-                payment.status = "succeeded"
-                authenticated_user.balance += payment.amount
-                await session.commit()
-                await session.refresh(authenticated_user)
-            elif remote.get("status") == "expired":
-                payment.status = "canceled"
-                await session.commit()
+    await apply_stripe_status(session, payment)
+    await session.commit()
 
     return DepositStatusResponse(status=payment.status, balance=float(authenticated_user.balance))

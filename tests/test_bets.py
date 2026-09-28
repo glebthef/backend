@@ -130,3 +130,72 @@ def test_total_exactly_on_line_is_refunded(client, make_user, make_event, balanc
 
     assert bet_status(client, alice) == "refund"
     assert balance_of(alice["id"]) == Decimal("1000.00")
+
+
+def test_express_rejects_two_outcomes_of_same_event(client, make_user, make_event, balance_of):
+    # Исходы одного матча связаны между собой — в классический экспресс нельзя.
+    alice = make_user("alice", balance="1000")
+    event_id = make_event(total_value=Decimal("2.5"), odd_total_over=Decimal("1.90"))
+
+    r = place_express(client, alice, [(event_id, "p1"), (event_id, "total_over")], 100)
+    assert r.status_code == 400
+    assert balance_of(alice["id"]) == Decimal("1000.00")
+
+
+def test_bet_rejected_when_odd_changed(client, make_user, make_event, balance_of):
+    alice = make_user("alice", balance="1000")
+    event_id = make_event(odd_p1=Decimal("2.50"))
+
+    # В купоне пользователь видел 2.00, а админ уже поднял до 2.50.
+    r = client.post(
+        f"/users/{alice['id']}/bets/single",
+        json={"event_id": event_id, "outcome": "p1", "amount": 100, "expected_odd": 2.0},
+        headers=alice["headers"],
+    )
+    assert r.status_code == 409
+    assert balance_of(alice["id"]) == Decimal("1000.00")
+
+    r = client.post(
+        f"/users/{alice['id']}/bets/single",
+        json={"event_id": event_id, "outcome": "p1", "amount": 100, "expected_odd": 2.5},
+        headers=alice["headers"],
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_bet_amount_limits(client, make_user, make_event, balance_of):
+    alice = make_user("alice", balance="1000000")
+    event_id = make_event()
+
+    assert place_single(client, alice, event_id, "p1", 5).status_code == 422
+    assert place_single(client, alice, event_id, "p1", 100001).status_code == 422
+    assert place_single(client, alice, event_id, "p1", 10).status_code == 200
+
+
+def test_deleting_event_refunds_pending_bets(client, make_user, make_event, balance_of):
+    admin = make_user("admin", admin=True)
+    alice = make_user("alice", balance="1000")
+    event_id = make_event()
+    place_single(client, alice, event_id, "p1", 100)
+    assert balance_of(alice["id"]) == Decimal("900.00")
+
+    r = client.delete(f"/events/{event_id}", headers=admin["headers"])
+    assert r.status_code == 200, r.text
+
+    assert bet_status(client, alice) == "refund"
+    assert balance_of(alice["id"]) == Decimal("1000.00")
+
+
+def test_deleted_event_counts_as_odd_one_in_express(client, make_user, make_event, balance_of):
+    admin = make_user("admin", admin=True)
+    alice = make_user("alice", balance="1000")
+    e1 = make_event(odd_p1=Decimal("2.00"))
+    e2 = make_event(odd_p1=Decimal("1.50"))
+    place_express(client, alice, [(e1, "p1"), (e2, "p1")], 100)
+
+    client.delete(f"/events/{e2}", headers=admin["headers"])
+    assert bet_status(client, alice) == "pending"  # вторая нога ещё не сыграла
+
+    finish(client, admin, e1, 1, 0)
+    assert bet_status(client, alice) == "won"
+    assert balance_of(alice["id"]) == Decimal("1100.00")  # 900 + 100 × 2.00

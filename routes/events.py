@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies import get_session, get_admin_user
+from locks import lock_user
 from models import Event, Bet, BetLeg, User
 from schemas.events import EventCreate, EventResponse, EventFinish
 
@@ -90,9 +91,21 @@ async def delete_event(
     event = await session.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise HTTPException(404, "Event not found")
+
+    # Удалённое событие считается отменённым: по нерассчитанным исходам —
+    # возврат (коэффициент 1), как в разделе 6 «Правил». Иначе ставки на него
+    # навсегда остались бы «в ожидании», а деньги пользователей — замороженными.
+    legs = list(await session.scalars(
+        select(BetLeg).where(BetLeg.event_id == event_id, BetLeg.status == "pending")
+    ))
+    for leg in legs:
+        leg.status = "refund"
+    await session.flush()
+    counts = await settle_bets(session, {leg.bet_id for leg in legs})
+
     event.is_active = False
     await session.commit()
-    return {"detail": "Event deactivated"}
+    return {"detail": "Event deactivated", "legs_refunded": len(legs), **counts}
 
 
 @router.patch("/events/{event_id}/score", response_model=EventResponse)
@@ -166,40 +179,7 @@ async def finish_event(
                 leg.status = "won" if diff < 0 else "lost"
 
     await session.flush()
-
-    bets_won, bets_lost, bets_refunded = 0, 0, 0
-    for bet_id in {leg.bet_id for leg in legs}:
-        bet = await session.scalar(select(Bet).where(Bet.id == bet_id))
-        if bet is None or bet.status != "pending":
-            continue
-
-        all_legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet_id)))
-        statuses = [l.status for l in all_legs]
-        if "lost" in statuses:
-            bet.status = "lost"
-            bets_lost += 1
-            continue
-
-        if "pending" in statuses:
-            continue
-
-        user = await session.scalar(select(User).where(User.id == bet.user_id).with_for_update())
-        if all(s == "refund" for s in statuses):
-            bet.status = "refund"
-            if user:
-                user.balance += bet.amount
-            bets_refunded += 1
-        else:
-            payout_odd = Decimal("1")
-            for l in all_legs:
-                if l.status == "won":
-                    payout_odd *= l.odd
-            payout = (bet.amount * payout_odd).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            bet.status = "won"
-            if user:
-                user.balance += payout
-            bets_won += 1
-
+    counts = await settle_bets(session, {leg.bet_id for leg in legs})
     await session.commit()
 
     return {
@@ -209,7 +189,47 @@ async def finish_event(
         "legs_won": sum(1 for l in legs if l.status == "won"),
         "legs_lost": sum(1 for l in legs if l.status == "lost"),
         "legs_refunded": sum(1 for l in legs if l.status == "refund"),
-        "bets_won": bets_won,
-        "bets_lost": bets_lost,
-        "bets_refunded": bets_refunded,
+        **counts,
     }
+
+
+async def settle_bets(session: AsyncSession, bet_ids: set[int]) -> dict:
+    """Рассчитывает ставки, у которых только что поменялся статус ног.
+
+    Экспресс проигран, если проиграла хоть одна нога; ждёт, пока есть
+    нерассчитанные ноги; иначе выплата = сумма × произведение коэффициентов
+    выигравших ног (ноги с возвратом считаются с коэффициентом 1). Если все
+    ноги ушли в возврат — возвращается сама сумма ставки.
+    """
+    won, lost, refunded = 0, 0, 0
+    for bet_id in bet_ids:
+        bet = await session.scalar(select(Bet).where(Bet.id == bet_id).with_for_update())
+        if bet is None or bet.status != "pending":
+            continue
+
+        all_legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet_id)))
+        statuses = [l.status for l in all_legs]
+        if "lost" in statuses:
+            bet.status = "lost"
+            lost += 1
+            continue
+        if "pending" in statuses:
+            continue
+
+        user = await lock_user(session, bet.user_id)
+        if all(s == "refund" for s in statuses):
+            bet.status = "refund"
+            if user:
+                user.balance += bet.amount
+            refunded += 1
+        else:
+            payout_odd = Decimal("1")
+            for l in all_legs:
+                if l.status == "won":
+                    payout_odd *= l.odd
+            payout = (bet.amount * payout_odd).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            bet.status = "won"
+            if user:
+                user.balance += payout
+            won += 1
+    return {"bets_won": won, "bets_lost": lost, "bets_refunded": refunded}

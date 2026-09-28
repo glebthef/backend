@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies import get_session, get_authenticated_user, get_admin_user
+from locks import lock_user
 from models import User
 from schemas.user import UserCreate, UserResponse
 
@@ -52,14 +53,7 @@ async def credit_balance(
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
     # Ручное начисление (бонус, компенсация) — только администратор.
-    # Строка блокируется, чтобы начисление не потерялось при одновременной
-    # ставке этого пользователя; populate_existing — чтобы не взять из сессии
-    # баланс, прочитанный до блокировки (если админ начисляет сам себе).
-    user = await session.scalar(
-        select(User).where(User.id == user_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
+    user = await lock_user(session, user_id)
     if user is None:
         raise HTTPException(404, "User not found")
     user.balance += amount.quantize(Decimal("0.01"))

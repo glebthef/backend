@@ -1,5 +1,11 @@
 from datetime import datetime
-from pydantic import BaseModel, field_serializer, field_validator
+from typing import Annotated
+
+from pydantic import BaseModel, Field, field_serializer, field_validator
+
+# Коэффициент 1.0 и ниже означает, что даже выигравшая ставка ничего не
+# приносит или теряет деньги; верхняя граница — защита от опечатки админа.
+Odd = Annotated[float, Field(gt=1, le=1000)]
 
 
 class EventCreate(BaseModel):
@@ -8,17 +14,17 @@ class EventCreate(BaseModel):
     home: str
     away: str
     starts_at: datetime
-    odd_p1: float
-    odd_x: float | None = None
-    odd_p2: float
+    odd_p1: Odd
+    odd_x: Odd | None = None
+    odd_p2: Odd
     # Тотал
-    total_value: float | None = 2.5
-    odd_total_over: float | None = None
-    odd_total_under: float | None = None
+    total_value: float | None = Field(default=2.5, gt=0)
+    odd_total_over: Odd | None = None
+    odd_total_under: Odd | None = None
     # Фора
     handicap_value: float | None = 1.0
-    odd_handicap_home: float | None = None
-    odd_handicap_away: float | None = None
+    odd_handicap_home: Odd | None = None
+    odd_handicap_away: Odd | None = None
 
     @field_validator("starts_at")
     @classmethod
