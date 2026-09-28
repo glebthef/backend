@@ -44,6 +44,30 @@ async def get_users(
     return users
 
 
+@router.post("/users/{user_id}/balance", response_model=UserResponse)
+async def credit_balance(
+        user_id: int,
+        amount: Annotated[Decimal, Body(embed=True, gt=0, le=1_000_000)],
+        admin: Annotated[User, Depends(get_admin_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+):
+    # Ручное начисление (бонус, компенсация) — только администратор.
+    # Строка блокируется, чтобы начисление не потерялось при одновременной
+    # ставке этого пользователя; populate_existing — чтобы не взять из сессии
+    # баланс, прочитанный до блокировки (если админ начисляет сам себе).
+    user = await session.scalar(
+        select(User).where(User.id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if user is None:
+        raise HTTPException(404, "User not found")
+    user.balance += amount.quantize(Decimal("0.01"))
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
 @router.patch("/users/{user_id}/ban", response_model=UserResponse)
 async def ban_user(
         user_id: int,

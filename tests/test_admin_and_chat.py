@@ -23,6 +23,26 @@ def test_only_admin_can_create_events(client, make_user):
     assert r.json()["status"] == "upcoming"
 
 
+def test_only_admin_can_credit_balance(client, make_user, balance_of):
+    admin = make_user("admin", admin=True)
+    alice = make_user("alice", balance="100")
+
+    # Сам себе пользователь начислить не может.
+    r = client.post(f"/users/{alice['id']}/balance", json={"amount": 5000}, headers=alice["headers"])
+    assert r.status_code == 403
+    assert balance_of(alice["id"]) == 100
+
+    # Нулевая и отрицательная сумма отклоняются валидацией.
+    for bad in (0, -50):
+        r = client.post(f"/users/{alice['id']}/balance", json={"amount": bad}, headers=admin["headers"])
+        assert r.status_code == 422
+
+    r = client.post(f"/users/{alice['id']}/balance", json={"amount": 500}, headers=admin["headers"])
+    assert r.status_code == 200, r.text
+    assert r.json()["balance"] == 600
+    assert balance_of(alice["id"]) == 600
+
+
 def test_support_chat_roundtrip(client, make_user):
     admin = make_user("admin", admin=True)
     alice = make_user("alice")
