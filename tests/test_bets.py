@@ -199,3 +199,42 @@ def test_deleted_event_counts_as_odd_one_in_express(client, make_user, make_even
     finish(client, admin, e1, 1, 0)
     assert bet_status(client, alice) == "won"
     assert balance_of(alice["id"]) == Decimal("1100.00")  # 900 + 100 × 2.00
+
+
+def test_history_shows_each_leg_progress_and_match(client, make_user, make_event):
+    # Экспресс из двух матчей: первый уже сыграл, второй ещё нет — история
+    # должна показать это по каждому исходу, вместе с командами и счётом.
+    admin = make_user("admin", admin=True)
+    alice = make_user("alice", balance="1000")
+    e1 = make_event(home="Реал", away="Барселона")
+    e2 = make_event(home="Зенит", away="Спартак")
+    place_express(client, alice, [(e1, "p1"), (e2, "p2")], 100)
+    finish(client, admin, e1, 2, 0)
+
+    bet = client.get(f"/users/{alice['id']}/bets", headers=alice["headers"]).json()[0]
+    assert bet["status"] == "pending"
+    assert bet["actual_payout"] is None
+    first, second = bet["legs"]
+    assert first["status"] == "won"
+    assert first["event"]["home"] == "Реал"
+    assert first["event"]["status"] == "finished"
+    assert (first["event"]["home_score"], first["event"]["away_score"]) == (2, 0)
+    assert second["status"] == "pending"
+    assert second["event"]["away"] == "Спартак"
+    assert second["event"]["starts_at"].endswith("Z")
+
+
+def test_actual_payout_counts_refunded_leg_as_one(client, make_user, make_event):
+    admin = make_user("admin", admin=True)
+    alice = make_user("alice", balance="1000")
+    e1 = make_event(odd_p1=Decimal("2.00"))
+    e2 = make_event(odd_p1=Decimal("1.50"))
+    place_express(client, alice, [(e1, "p1"), (e2, "p1")], 100)
+    client.delete(f"/events/{e2}", headers=admin["headers"])
+    finish(client, admin, e1, 1, 0)
+
+    bet = client.get(f"/users/{alice['id']}/bets", headers=alice["headers"]).json()[0]
+    assert bet["status"] == "won"
+    assert Decimal(bet["potential_payout"]) == Decimal("300.00")  # 100 × 2.0 × 1.5 — если бы сыграли оба
+    assert Decimal(bet["actual_payout"]) == Decimal("200.00")     # 100 × 2.0 — второй матч отменён
+    assert [l["status"] for l in bet["legs"]] == ["won", "refund"]

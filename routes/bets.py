@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies import get_session, get_authenticated_user
 from locks import lock_user
 from models import Bet, BetLeg, Event, User
-from schemas.bets import SingleBetCreate, ExpressBetCreate, BetResponse, BetLegResponse
+from schemas.bets import SingleBetCreate, ExpressBetCreate, BetResponse, BetLegResponse, BetLegEvent
 
 router = APIRouter()
 
@@ -116,9 +117,7 @@ async def create_single_bet(
 
     await session.commit()
     await session.refresh(bet)
-
-    legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet.id)))
-    return _bet_to_response(bet, legs)
+    return (await _bets_to_response(session, [bet]))[0]
 
 
 @router.post("/users/{user_id}/bets/express", response_model=BetResponse)
@@ -199,9 +198,7 @@ async def create_express_bet(
 
     await session.commit()
     await session.refresh(bet)
-
-    legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet.id)))
-    return _bet_to_response(bet, legs)
+    return (await _bets_to_response(session, [bet]))[0]
 
 
 @router.get("/users/{user_id}/bets", response_model=list[BetResponse])
@@ -216,25 +213,57 @@ async def get_bets(
     bets = list(await session.scalars(
         select(Bet).where(Bet.user_id == user_id).order_by(Bet.created_at.desc())
     ))
-
-    result = []
-    for bet in bets:
-        legs = list(await session.scalars(select(BetLeg).where(BetLeg.bet_id == bet.id)))
-        result.append(_bet_to_response(bet, legs))
-    return result
+    return await _bets_to_response(session, bets)
 
 
-def _bet_to_response(bet: Bet, legs: list[BetLeg]) -> BetResponse:
-    return BetResponse(
-        id=bet.id,
-        type=bet.type,
-        amount=bet.amount,
-        combined_odd=bet.combined_odd,
-        potential_payout=bet.potential_payout,
-        status=bet.status,
-        created_at=bet.created_at,
-        legs=[BetLegResponse(
-            id=l.id, event_id=l.event_id,
-            outcome=l.outcome, odd=l.odd, line_value=l.line_value, status=l.status,
-        ) for l in legs],
-    )
+def actual_payout(bet: Bet, legs: list[BetLeg]) -> Decimal | None:
+    """Сколько фактически начислено по ставке — по той же формуле, что и
+    при расчёте (settle_bets): ноги с возвратом идут с коэффициентом 1, так
+    что выплата может быть меньше потенциальной."""
+    if bet.status == "won":
+        odd = Decimal("1")
+        for leg in legs:
+            if leg.status == "won":
+                odd *= leg.odd
+        return (bet.amount * odd).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if bet.status in ("refund", "cancelled"):
+        return bet.amount
+    if bet.status == "lost":
+        return Decimal("0")
+    return None
+
+
+async def _bets_to_response(session: AsyncSession, bets: list[Bet]) -> list[BetResponse]:
+    # Ноги и события — двумя запросами на все ставки сразу, а не по запросу
+    # на каждую ставку.
+    bet_ids = [b.id for b in bets]
+    legs = list(await session.scalars(
+        select(BetLeg).where(BetLeg.bet_id.in_(bet_ids)).order_by(BetLeg.id)
+    )) if bet_ids else []
+    event_ids = {l.event_id for l in legs}
+    events = {
+        e.id: e for e in await session.scalars(select(Event).where(Event.id.in_(event_ids)))
+    } if event_ids else {}
+
+    legs_by_bet: dict[int, list[BetLeg]] = defaultdict(list)
+    for leg in legs:
+        legs_by_bet[leg.bet_id].append(leg)
+
+    return [
+        BetResponse(
+            id=bet.id,
+            type=bet.type,
+            amount=bet.amount,
+            combined_odd=bet.combined_odd,
+            potential_payout=bet.potential_payout,
+            actual_payout=actual_payout(bet, legs_by_bet[bet.id]),
+            status=bet.status,
+            created_at=bet.created_at,
+            legs=[BetLegResponse(
+                id=l.id, event_id=l.event_id,
+                outcome=l.outcome, odd=l.odd, line_value=l.line_value, status=l.status,
+                event=BetLegEvent.model_validate(events[l.event_id]) if l.event_id in events else None,
+            ) for l in legs_by_bet[bet.id]],
+        )
+        for bet in bets
+    ]
