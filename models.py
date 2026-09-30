@@ -77,11 +77,8 @@ class BetLeg(Base):
     event_id: Mapped[int] = mapped_column(ForeignKey("event.id"))
     outcome: Mapped[str]
     odd: Mapped[Decimal] = mapped_column(Numeric(6, 2))
-    # Snapshot of the event's total/handicap line at the moment the bet was
-    # placed, so settlement is correct even if an admin edits the event's
-    # line afterwards. Null for p1/x/p2 legs.
     line_value: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
-    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost | refund | cancelled
+    status: Mapped[str] = mapped_column(default="pending")
 
 
 class Payment(Base):
@@ -90,7 +87,7 @@ class Payment(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
     provider_payment_id: Mapped[str] = mapped_column(unique=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    status: Mapped[str] = mapped_column(default="pending")  # pending | succeeded | canceled
+    status: Mapped[str] = mapped_column(default="pending")
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -98,7 +95,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_message"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
-    sender: Mapped[str]  # "user" | "support"
+    sender: Mapped[str]
     text: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 

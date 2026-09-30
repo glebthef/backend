@@ -48,9 +48,6 @@ def check_event_biddable(event: Event, event_id: int) -> None:
 
 
 def check_expected_odd(expected: Decimal | None, actual: Decimal, event_id: int) -> None:
-    # Купон запоминает коэффициент в момент добавления исхода. Если админ
-    # с тех пор поменял линию, ставку нельзя молча принять по другому
-    # коэффициенту — пусть пользователь увидит новый и подтвердит заново.
     if expected is not None and expected != actual:
         raise HTTPException(
             409,
@@ -150,9 +147,6 @@ async def create_express_bet(
             raise HTTPException(400, f"Outcome '{leg.outcome}' not available for event {leg.event_id}")
         check_expected_odd(leg.expected_odd, odd, leg.event_id)
 
-        # Классический экспресс — только из разных событий: исходы одного
-        # матча связаны (П1 и Фора 1 почти всегда играют вместе), и простое
-        # перемножение их коэффициентов дало бы завышенную выплату.
         if leg.event_id in seen_events:
             raise HTTPException(400, "В экспресс нельзя включать несколько исходов одного события")
         seen_events.add(leg.event_id)
@@ -217,9 +211,6 @@ async def get_bets(
 
 
 def actual_payout(bet: Bet, legs: list[BetLeg]) -> Decimal | None:
-    """Сколько фактически начислено по ставке — по той же формуле, что и
-    при расчёте (settle_bets): ноги с возвратом идут с коэффициентом 1, так
-    что выплата может быть меньше потенциальной."""
     if bet.status == "won":
         odd = Decimal("1")
         for leg in legs:
@@ -234,8 +225,6 @@ def actual_payout(bet: Bet, legs: list[BetLeg]) -> Decimal | None:
 
 
 async def _bets_to_response(session: AsyncSession, bets: list[Bet]) -> list[BetResponse]:
-    # Ноги и события — двумя запросами на все ставки сразу, а не по запросу
-    # на каждую ставку.
     bet_ids = [b.id for b in bets]
     legs = list(await session.scalars(
         select(BetLeg).where(BetLeg.bet_id.in_(bet_ids)).order_by(BetLeg.id)

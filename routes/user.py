@@ -52,7 +52,6 @@ async def credit_balance(
         admin: Annotated[User, Depends(get_admin_user)],
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    # Ручное начисление (бонус, компенсация) — только администратор.
     user = await lock_user(session, user_id)
     if user is None:
         raise HTTPException(404, "User not found")

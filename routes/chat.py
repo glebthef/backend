@@ -16,7 +16,6 @@ async def list_chats(
         admin: Annotated[User, Depends(get_admin_user)],
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    # One row per user: their most recent message, for an admin inbox list.
     last_ids = (
         select(func.max(ChatMessage.id))
         .group_by(ChatMessage.user_id)
@@ -67,7 +66,6 @@ async def send_chat_message(
     if authenticated_user.id == user_id:
         sender = "user"
     elif authenticated_user.is_admin:
-        # An admin replying into someone else's thread acts as support.
         sender = "support"
     else:
         raise HTTPException(403, "Access denied")

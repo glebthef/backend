@@ -11,8 +11,6 @@ class SingleBetCreate(BaseModel):
     event_id: int
     outcome: str
     amount: Decimal = Field(ge=MIN_BET, le=MAX_BET)
-    # Коэффициент, который пользователь видел в купоне. Необязателен, но если
-    # передан и не совпадает с текущим — ставка отклоняется (409).
     expected_odd: Decimal | None = None
 
 
@@ -28,8 +26,6 @@ class ExpressBetCreate(BaseModel):
 
 
 class BetLegEvent(BaseModel):
-    """Матч, на который сделан исход — чтобы история ставок показывала
-    команды, время начала, статус и счёт, а не только номер события."""
     model_config = {"from_attributes": True}
     id: int
     sport_slug: str
@@ -65,7 +61,6 @@ class BetResponse(BaseModel):
     amount: Decimal
     combined_odd: Decimal
     potential_payout: Decimal
-    # Фактически начисленная сумма: None, пока ставка не рассчитана.
     actual_payout: Decimal | None = None
     status: str
     created_at: datetime

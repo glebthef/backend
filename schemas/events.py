@@ -3,8 +3,6 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
-# Коэффициент 1.0 и ниже означает, что даже выигравшая ставка ничего не
-# приносит или теряет деньги; верхняя граница — защита от опечатки админа.
 Odd = Annotated[float, Field(gt=1, le=1000)]
 
 
@@ -57,9 +55,6 @@ class EventResponse(BaseModel):
 
     @field_serializer("starts_at")
     def serialize_starts_at(self, dt: datetime) -> str:
-        # Stored naive-but-UTC; without an explicit "Z" a browser's Date()
-        # parses this as *local* time, silently shifting every live/finished
-        # check and displayed kickoff time by the viewer's UTC offset.
         return dt.isoformat() + "Z"
 
 

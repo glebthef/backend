@@ -1,12 +1,3 @@
-"""Общие фикстуры для тестов API.
-
-Тесты гоняют приложение целиком (FastAPI + настоящий PostgreSQL), но в
-отдельной базе primebet_test — рабочая база не затрагивается. Перед каждым
-тестом все таблицы очищаются.
-
-Адрес сервера Postgres можно переопределить переменной TEST_PG
-(по умолчанию postgres:postgres@127.0.0.1:5432).
-"""
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -18,8 +9,6 @@ from sqlalchemy import create_engine, text, update
 TEST_PG = os.getenv("TEST_PG", "postgres:postgres@127.0.0.1:5432")
 TEST_DB = "primebet_test"
 
-# models.py создаёт движок при импорте, поэтому адрес базы нужно выставить
-# до импорта приложения.
 os.environ["DATABASE_URL"] = f"postgresql+asyncpg://{TEST_PG}/{TEST_DB}"
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -38,7 +27,6 @@ def _ensure_test_database():
 
 @pytest.fixture(scope="session")
 def db():
-    """Синхронный движок для подготовки данных и проверок напрямую в БД."""
     _ensure_test_database()
     engine = create_engine(f"postgresql+psycopg://{TEST_PG}/{TEST_DB}")
     Base.metadata.drop_all(engine)
@@ -49,8 +37,6 @@ def db():
 
 @pytest.fixture(scope="session")
 def client(db):
-    # Один TestClient на всю сессию: так приложение живёт в одном event loop,
-    # и соединения asyncpg из пула не «теряют» свой цикл между тестами.
     with TestClient(app) as c:
         yield c
 
@@ -65,11 +51,6 @@ def clean_tables(db):
 
 @pytest.fixture
 def make_user(client, db):
-    """Регистрирует пользователя через API и логинит его.
-
-    Баланс и права админа выставляются напрямую в БД — в API для этого
-    нет (и не должно быть) публичного способа.
-    """
     def _make(login, balance="0", admin=False, password="secret123"):
         r = client.post("/users", json={"login": login, "password": password})
         assert r.status_code == 200, r.text
@@ -88,8 +69,6 @@ def make_user(client, db):
 
 @pytest.fixture
 def make_event(db):
-    """Создаёт событие напрямую в БД. starts_in — через сколько часов начало
-    (отрицательное значение — матч уже идёт)."""
     def _make(starts_in=24, **fields):
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         values = {

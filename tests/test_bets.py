@@ -1,4 +1,3 @@
-"""Ставки: списание баланса, проверки и расчёт после завершения события."""
 from decimal import Decimal
 
 
@@ -37,7 +36,6 @@ def test_single_bet_deducts_balance_and_uses_server_odds(client, make_user, make
     alice = make_user("alice", balance="1000")
     event_id = make_event(odd_p1=Decimal("2.50"))
 
-    # Клиент присылает только исход — коэффициент берётся из БД, подделать нельзя.
     r = place_single(client, alice, event_id, "p1", 100)
     assert r.status_code == 200, r.text
     bet = r.json()
@@ -49,7 +47,6 @@ def test_single_bet_deducts_balance_and_uses_server_odds(client, make_user, make
 
 
 def test_placed_bet_cannot_be_cancelled(client, make_user, make_event, balance_of):
-    # Иначе можно было бы дождаться, что команда проигрывает, и забрать деньги.
     alice = make_user("alice", balance="1000")
     bet_id = place_single(client, alice, make_event(), "p1", 100).json()["id"]
 
@@ -69,7 +66,7 @@ def test_bet_rejected_when_balance_is_insufficient(client, make_user, make_event
 
 def test_cannot_bet_on_started_event(client, make_user, make_event, balance_of):
     alice = make_user("alice", balance="1000")
-    event_id = make_event(starts_in=-1)  # матч начался час назад
+    event_id = make_event(starts_in=-1)
 
     r = place_single(client, alice, event_id, "p1", 100)
     assert r.status_code == 400
@@ -98,7 +95,6 @@ def test_express_win_pays_out(client, make_user, make_event, balance_of):
     assert balance_of(alice["id"]) == Decimal("900.00")
 
     finish(client, admin, e1, 2, 0)
-    # Пока второе событие не завершено, экспресс остаётся в ожидании.
     assert bet_status(client, alice) == "pending"
 
     finish(client, admin, e2, 1, 0)
@@ -113,8 +109,8 @@ def test_express_loses_if_any_leg_loses(client, make_user, make_event, balance_o
     e2 = make_event()
 
     place_express(client, alice, [(e1, "p1"), (e2, "p1")], 100)
-    finish(client, admin, e1, 2, 0)  # эта нога выиграла
-    finish(client, admin, e2, 0, 1)  # а эта проиграла
+    finish(client, admin, e1, 2, 0)
+    finish(client, admin, e2, 0, 1)
 
     assert bet_status(client, alice) == "lost"
     assert balance_of(alice["id"]) == Decimal("900.00")
@@ -133,7 +129,6 @@ def test_total_exactly_on_line_is_refunded(client, make_user, make_event, balanc
 
 
 def test_express_rejects_two_outcomes_of_same_event(client, make_user, make_event, balance_of):
-    # Исходы одного матча связаны между собой — в классический экспресс нельзя.
     alice = make_user("alice", balance="1000")
     event_id = make_event(total_value=Decimal("2.5"), odd_total_over=Decimal("1.90"))
 
@@ -146,7 +141,6 @@ def test_bet_rejected_when_odd_changed(client, make_user, make_event, balance_of
     alice = make_user("alice", balance="1000")
     event_id = make_event(odd_p1=Decimal("2.50"))
 
-    # В купоне пользователь видел 2.00, а админ уже поднял до 2.50.
     r = client.post(
         f"/users/{alice['id']}/bets/single",
         json={"event_id": event_id, "outcome": "p1", "amount": 100, "expected_odd": 2.0},
@@ -194,7 +188,7 @@ def test_deleted_event_counts_as_odd_one_in_express(client, make_user, make_even
     place_express(client, alice, [(e1, "p1"), (e2, "p1")], 100)
 
     client.delete(f"/events/{e2}", headers=admin["headers"])
-    assert bet_status(client, alice) == "pending"  # вторая нога ещё не сыграла
+    assert bet_status(client, alice) == "pending"
 
     finish(client, admin, e1, 1, 0)
     assert bet_status(client, alice) == "won"
@@ -202,8 +196,6 @@ def test_deleted_event_counts_as_odd_one_in_express(client, make_user, make_even
 
 
 def test_history_shows_each_leg_progress_and_match(client, make_user, make_event):
-    # Экспресс из двух матчей: первый уже сыграл, второй ещё нет — история
-    # должна показать это по каждому исходу, вместе с командами и счётом.
     admin = make_user("admin", admin=True)
     alice = make_user("alice", balance="1000")
     e1 = make_event(home="Реал", away="Барселона")
@@ -235,6 +227,6 @@ def test_actual_payout_counts_refunded_leg_as_one(client, make_user, make_event)
 
     bet = client.get(f"/users/{alice['id']}/bets", headers=alice["headers"]).json()[0]
     assert bet["status"] == "won"
-    assert Decimal(bet["potential_payout"]) == Decimal("300.00")  # 100 × 2.0 × 1.5 — если бы сыграли оба
-    assert Decimal(bet["actual_payout"]) == Decimal("200.00")     # 100 × 2.0 — второй матч отменён
+    assert Decimal(bet["potential_payout"]) == Decimal("300.00")
+    assert Decimal(bet["actual_payout"]) == Decimal("200.00")
     assert [l["status"] for l in bet["legs"]] == ["won", "refund"]

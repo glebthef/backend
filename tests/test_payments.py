@@ -1,4 +1,3 @@
-"""Сверка платежей со Stripe. Сам Stripe подменяется: тесты не ходят в сеть."""
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -28,8 +27,6 @@ def fake_stripe(monkeypatch, answer):
 
 
 def test_sync_credits_paid_deposit_exactly_once(client, make_user, db, balance_of, monkeypatch):
-    # Пользователь оплатил и закрыл вкладку — деньги должны прийти при
-    # следующем открытии профиля, и ровно один раз.
     alice = make_user("alice", balance="100")
     add_payment(db, alice["id"])
     fake_stripe(monkeypatch, {"payment_status": "paid", "status": "complete"})

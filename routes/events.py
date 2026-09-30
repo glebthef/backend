@@ -92,9 +92,6 @@ async def delete_event(
     if event is None:
         raise HTTPException(404, "Event not found")
 
-    # Удалённое событие считается отменённым: по нерассчитанным исходам —
-    # возврат (коэффициент 1), как в разделе 6 «Правил». Иначе ставки на него
-    # навсегда остались бы «в ожидании», а деньги пользователей — замороженными.
     legs = list(await session.scalars(
         select(BetLeg).where(BetLeg.event_id == event_id, BetLeg.status == "pending")
     ))
@@ -115,10 +112,6 @@ async def update_live_score(
         admin: Annotated[User, Depends(get_admin_user)],
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    # Separate from finish_event on purpose: this only records the current
-    # score for display (e.g. while the match is live) and never touches
-    # status/result or settles bets, so it can be called as many times as
-    # needed while the event is still in progress.
     event = await session.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise HTTPException(404, "Event not found")
@@ -194,13 +187,6 @@ async def finish_event(
 
 
 async def settle_bets(session: AsyncSession, bet_ids: set[int]) -> dict:
-    """Рассчитывает ставки, у которых только что поменялся статус ног.
-
-    Экспресс проигран, если проиграла хоть одна нога; ждёт, пока есть
-    нерассчитанные ноги; иначе выплата = сумма × произведение коэффициентов
-    выигравших ног (ноги с возвратом считаются с коэффициентом 1). Если все
-    ноги ушли в возврат — возвращается сама сумма ставки.
-    """
     won, lost, refunded = 0, 0, 0
     for bet_id in bet_ids:
         bet = await session.scalar(select(Bet).where(Bet.id == bet_id).with_for_update())

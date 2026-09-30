@@ -1,6 +1,3 @@
-"""Регистрация, вход и разграничение доступа."""
-
-
 def test_register_and_login(client):
     r = client.post("/users", json={"login": "alice", "password": "secret123"})
     assert r.status_code == 200, r.text
@@ -41,7 +38,6 @@ def test_user_cannot_read_someone_elses_bets(client, make_user):
 
 
 def test_user_cannot_top_up_balance_directly(client, make_user, balance_of):
-    # Пополнить баланс можно только через подтверждённый Stripe-платёж.
     alice = make_user("alice")
     r = client.patch(f"/users/{alice['id']}/balance", json={"amount": 1000000}, headers=alice["headers"])
     assert r.status_code in (403, 404, 405)
@@ -55,7 +51,6 @@ def test_banned_user_is_locked_out(client, make_user):
     r = client.patch(f"/users/{alice['id']}/ban", json={"banned": True}, headers=admin["headers"])
     assert r.status_code == 200, r.text
 
-    # Уже выданная сессия перестаёт работать сразу, без перелогина.
     r = client.get(f"/users/{alice['id']}/bets", headers=alice["headers"])
     assert r.status_code == 403
     assert r.json()["detail"] == "Account banned"

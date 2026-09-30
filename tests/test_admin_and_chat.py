@@ -1,4 +1,3 @@
-"""Права администратора и чат поддержки."""
 from datetime import datetime, timedelta, timezone
 
 
@@ -27,12 +26,10 @@ def test_only_admin_can_credit_balance(client, make_user, balance_of):
     admin = make_user("admin", admin=True)
     alice = make_user("alice", balance="100")
 
-    # Сам себе пользователь начислить не может.
     r = client.post(f"/users/{alice['id']}/balance", json={"amount": 5000}, headers=alice["headers"])
     assert r.status_code == 403
     assert balance_of(alice["id"]) == 100
 
-    # Нулевая и отрицательная сумма отклоняются валидацией.
     for bad in (0, -50):
         r = client.post(f"/users/{alice['id']}/balance", json={"amount": bad}, headers=admin["headers"])
         assert r.status_code == 422
@@ -51,14 +48,12 @@ def test_support_chat_roundtrip(client, make_user):
     r = client.post(f"/users/{alice['id']}/chat", json={"text": "Не пришёл выигрыш"}, headers=alice["headers"])
     assert r.status_code == 200 and r.json()["sender"] == "user"
 
-    # Админ пишет в тред Алисы — сообщение уходит от имени поддержки.
     r = client.post(f"/users/{alice['id']}/chat", json={"text": "Сейчас проверим"}, headers=admin["headers"])
     assert r.status_code == 200 and r.json()["sender"] == "support"
 
     r = client.get(f"/users/{alice['id']}/chat", headers=alice["headers"])
     assert [m["sender"] for m in r.json()] == ["user", "support"]
 
-    # Чужую переписку читать нельзя.
     assert client.get(f"/users/{alice['id']}/chat", headers=bob["headers"]).status_code == 403
 
 

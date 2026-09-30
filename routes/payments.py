@@ -17,9 +17,6 @@ router = APIRouter()
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_API_URL = "https://api.stripe.com/v1/checkout/sessions"
 
-# Грубый курс только для того, чтобы тестовая страница Stripe показывала
-# правдоподобную сумму в USD — Stripe не поддерживает расчёты в RUB.
-# Реальный баланс пользователя как хранился, так и хранится в рублях.
 RUB_TO_USD_RATE = Decimal("90")
 
 
@@ -76,8 +73,6 @@ async def create_deposit(
 
 
 async def fetch_checkout_session(session_id: str) -> dict | None:
-    """Текущее состояние Checkout Session в Stripe или None, если Stripe
-    недоступен — тогда платёж просто останется pending до следующей проверки."""
     if not STRIPE_SECRET_KEY:
         return None
     async with httpx.AsyncClient() as client:
@@ -93,9 +88,6 @@ async def fetch_checkout_session(session_id: str) -> dict | None:
 
 
 async def apply_stripe_status(session: AsyncSession, payment: Payment) -> Decimal:
-    """Сверяет платёж со Stripe и, если он оплачен, зачисляет деньги.
-    Строка платежа должна быть заблокирована вызывающим кодом.
-    Возвращает зачисленную сумму (0, если ничего не зачислено)."""
     if payment.status != "pending":
         return Decimal("0")
     remote = await fetch_checkout_session(payment.provider_payment_id)
@@ -117,14 +109,9 @@ async def sync_deposits(
         authenticated_user: Annotated[User, Depends(get_authenticated_user)],
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Проверяет все незавершённые платежи пользователя. Зачисление не
-    зависит от того, вернулся ли пользователь со страницы Stripe в том же
-    браузере: достаточно открыть профиль с любого устройства."""
     if authenticated_user.id != user_id:
         raise HTTPException(403, "Access denied")
 
-    # FOR UPDATE: если две проверки пришли одновременно, вторая дождётся
-    # первой и уже не увидит зачисленный платёж в статусе pending.
     payments = list(await session.scalars(
         select(Payment)
         .where(Payment.user_id == user_id, Payment.status == "pending")
@@ -152,8 +139,6 @@ async def get_deposit_status(
     if authenticated_user.id != user_id:
         raise HTTPException(403, "Access denied")
 
-    # Блокируем строку платежа, чтобы два почти одновременных запроса
-    # статуса (двойной клик, обновление страницы) не зачислили баланс дважды.
     payment = await session.scalar(
         select(Payment)
         .where(Payment.provider_payment_id == payment_id, Payment.user_id == user_id)
