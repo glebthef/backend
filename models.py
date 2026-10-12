@@ -74,6 +74,8 @@ class User(Base):
     balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
     is_admin: Mapped[bool] = mapped_column(default=False)
     is_banned: Mapped[bool] = mapped_column(default=False)
+    age_confirmed_at: Mapped[datetime | None] = mapped_column(default=None)
+    consent_at: Mapped[datetime | None] = mapped_column(default=None)
 
 class Sport(Base):
     __tablename__ = "sport"

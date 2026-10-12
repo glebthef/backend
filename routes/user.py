@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 from argon2 import PasswordHasher
@@ -19,7 +20,14 @@ async def create_user(
         session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ph = PasswordHasher()
-    new_user = User(login=user_data.login, password_hash=ph.hash(user_data.password), balance=Decimal("0.00"))
+    now = datetime.utcnow()
+    new_user = User(
+        login=user_data.login,
+        password_hash=ph.hash(user_data.password),
+        balance=Decimal("0.00"),
+        age_confirmed_at=now,
+        consent_at=now,
+    )
     session.add(new_user)
     try:
         await session.commit()
