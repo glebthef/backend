@@ -1,7 +1,8 @@
+import enum
 import os
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import ForeignKey, Numeric
+from sqlalchemy import Enum, ForeignKey, Numeric
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -15,6 +16,54 @@ engine = create_async_engine(DATABASE_URL, echo=False)
 
 class Base(DeclarativeBase):
     pass
+
+
+class StrEnum(str, enum.Enum):
+    def __str__(self):
+        return self.value
+
+
+class BetType(StrEnum):
+    SINGLE = "single"
+    EXPRESS = "express"
+
+
+class BetStatus(StrEnum):
+    PENDING = "pending"
+    WON = "won"
+    LOST = "lost"
+    REFUND = "refund"
+    CANCELLED = "cancelled"
+
+
+class BetOutcome(StrEnum):
+    P1 = "p1"
+    X = "x"
+    P2 = "p2"
+    TOTAL_OVER = "total_over"
+    TOTAL_UNDER = "total_under"
+    HANDICAP_HOME = "handicap_home"
+    HANDICAP_AWAY = "handicap_away"
+
+
+class EventStatus(StrEnum):
+    UPCOMING = "upcoming"
+    FINISHED = "finished"
+
+
+class PaymentStatus(StrEnum):
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    CANCELED = "canceled"
+
+
+class ChatSender(StrEnum):
+    USER = "user"
+    SUPPORT = "support"
+
+
+def pg_enum(cls, name):
+    return Enum(cls, name=name, values_callable=lambda e: [m.value for m in e])
 
 
 class User(Base):
@@ -52,7 +101,7 @@ class Event(Base):
     odd_handicap_home: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
     odd_handicap_away: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
     is_active: Mapped[bool] = mapped_column(default=True)
-    status: Mapped[str] = mapped_column(default="upcoming")
+    status: Mapped[EventStatus] = mapped_column(pg_enum(EventStatus, "event_status"), default=EventStatus.UPCOMING)
     home_score: Mapped[int | None] = mapped_column(default=None)
     away_score: Mapped[int | None] = mapped_column(default=None)
     result: Mapped[str | None] = mapped_column(default=None)
@@ -62,11 +111,11 @@ class Bet(Base):
     __tablename__ = "bet"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
-    type: Mapped[str] = mapped_column(default="single")  # single | express
+    type: Mapped[BetType] = mapped_column(pg_enum(BetType, "bet_type"), default=BetType.SINGLE)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     combined_odd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
     potential_payout: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    status: Mapped[str] = mapped_column(default="pending")  # pending | won | lost | refund | cancelled
+    status: Mapped[BetStatus] = mapped_column(pg_enum(BetStatus, "bet_status"), default=BetStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -75,10 +124,10 @@ class BetLeg(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     bet_id: Mapped[int] = mapped_column(ForeignKey("bet.id"))
     event_id: Mapped[int] = mapped_column(ForeignKey("event.id"))
-    outcome: Mapped[str]
+    outcome: Mapped[BetOutcome] = mapped_column(pg_enum(BetOutcome, "bet_outcome"))
     odd: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     line_value: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), default=None)
-    status: Mapped[str] = mapped_column(default="pending")
+    status: Mapped[BetStatus] = mapped_column(pg_enum(BetStatus, "bet_status"), default=BetStatus.PENDING)
 
 
 class Payment(Base):
@@ -87,7 +136,7 @@ class Payment(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
     provider_payment_id: Mapped[str] = mapped_column(unique=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    status: Mapped[str] = mapped_column(default="pending")
+    status: Mapped[PaymentStatus] = mapped_column(pg_enum(PaymentStatus, "payment_status"), default=PaymentStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
@@ -95,7 +144,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_message"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
-    sender: Mapped[str]
+    sender: Mapped[ChatSender] = mapped_column(pg_enum(ChatSender, "chat_sender"))
     text: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
